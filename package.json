@@ -1,0 +1,19 @@
+{
+  "name": "renovation-twin",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm --filter @renovation-twin/web dev",
+    "build": "pnpm --filter @renovation-twin/web build",
+    "lint": "pnpm --filter @renovation-twin/web lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "format": "prettier --write .",
+    "db:generate": "pnpm --filter @renovation-twin/db generate"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3"
+  }
+}

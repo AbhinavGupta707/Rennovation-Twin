@@ -1,0 +1,46 @@
+{
+  "name": "@renovation-twin/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.1.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.4.2",
+    "@renovation-twin/ai": "workspace:*",
+    "@renovation-twin/db": "workspace:*",
+    "@renovation-twin/events": "workspace:*",
+    "@renovation-twin/fixtures": "workspace:*",
+    "@renovation-twin/geometry": "workspace:*",
+    "@renovation-twin/types": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "konva": "^10.0.12",
+    "lucide-react": "^0.561.0",
+    "next": "^16.0.10",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "react-konva": "^19.0.12",
+    "tailwind-merge": "^3.4.0",
+    "three": "^0.182.0",
+    "zod": "^4.1.13",
+    "zustand": "^5.0.9"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "@types/node": "^25.0.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^16.0.10",
+    "tailwindcss": "^4.1.18",
+    "typescript": "^5.9.3"
+  }
+}

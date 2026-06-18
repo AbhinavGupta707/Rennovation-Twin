@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id              String        @id @default(cuid())
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  title           String
+  status          ProjectStatus @default(DRAFT)
+  anonymousUserId String?
+  postcode        String?
+  addressLabel    String?
+  planImageUrl    String?
+  originalFileUrl String?
+  scalePxPerMeter Float?
+  currentPlanId   String?
+  shareToken      String?       @unique
+  events          EventLog[]
+  planVersions    PlanVersion[]
+  variants        DesignVariant[]
+}
+
+enum ProjectStatus {
+  DRAFT
+  UPLOADED
+  PARSED
+  PLAN_CONFIRMED
+  MODEL_GENERATED
+  VARIANTS_GENERATED
+  SHARED
+}
+
+model PlanVersion {
+  id        String     @id @default(cuid())
+  projectId String
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  version   Int
+  source    PlanSource
+  confidence Float?
+  planJson  Json
+  createdAt DateTime   @default(now())
+}
+
+enum PlanSource {
+  AUTO_PARSE
+  MANUAL_EDIT
+  SAMPLE
+}
+
+model DesignVariant {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name          String
+  prompt        String
+  style         String
+  variantJson   Json
+  screenshotUrl String?
+  createdAt     DateTime @default(now())
+}
+
+model EventLog {
+  id        String   @id @default(cuid())
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name      String
+  props     Json?
+  createdAt DateTime @default(now())
+}

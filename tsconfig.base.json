@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@renovation-twin/types": ["packages/types/src/index.ts"],
+      "@renovation-twin/events": ["packages/events/src/index.ts"],
+      "@renovation-twin/fixtures": ["packages/fixtures/src/index.ts"],
+      "@renovation-twin/geometry": ["packages/geometry/src/index.ts"],
+      "@renovation-twin/ai": ["packages/ai/src/index.ts"],
+      "@renovation-twin/db": ["packages/db/src/index.ts"]
+    }
+  }
+}

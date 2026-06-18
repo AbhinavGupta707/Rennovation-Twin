@@ -1,0 +1,41 @@
+<svg width="980" height="700" viewBox="0 0 980 700" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Sample London flat floor plan</title>
+  <desc id="desc">A simplified two-bedroom London flat plan used for the RenovationTwin demo.</desc>
+  <rect width="980" height="700" fill="#FBFCFA"/>
+  <g stroke="#14201C" stroke-width="16" stroke-linecap="square">
+    <path d="M80 70H900V620H80V70Z"/>
+  </g>
+  <g stroke="#14201C" stroke-width="10" stroke-linecap="square">
+    <path d="M360 70V330"/>
+    <path d="M620 70V620"/>
+    <path d="M80 330H620"/>
+    <path d="M250 330V620"/>
+    <path d="M430 330V620"/>
+  </g>
+  <g fill="#F7F2E8" stroke="#1967D2" stroke-width="3">
+    <rect x="92" y="82" width="256" height="236"/>
+    <rect x="372" y="82" width="236" height="236"/>
+    <rect x="632" y="342" width="256" height="266"/>
+    <rect x="442" y="342" width="166" height="266"/>
+    <rect x="92" y="342" width="146" height="266"/>
+    <rect x="262" y="342" width="156" height="266"/>
+  </g>
+  <g fill="#14201C" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700">
+    <text x="145" y="205">Bedroom</text>
+    <text x="420" y="205">Office / guest</text>
+    <text x="690" y="480">Living / dining</text>
+    <text x="480" y="480">Kitchen</text>
+    <text x="116" y="480">Bath</text>
+    <text x="300" y="480">Hall</text>
+  </g>
+  <g stroke="#1967D2" stroke-width="10" stroke-linecap="round">
+    <path d="M180 70H280"/>
+    <path d="M700 70H800"/>
+    <path d="M900 420V540"/>
+  </g>
+  <g stroke="#B87745" stroke-width="8" stroke-linecap="round">
+    <path d="M195 330C195 370 225 392 250 392"/>
+    <path d="M510 330C510 370 540 392 570 392"/>
+    <path d="M790 620C790 582 820 560 856 560"/>
+  </g>
+</svg>
