@@ -34,5 +34,8 @@ export async function PUT(
   }
 
   const project = savePlan(projectId, parsed.data);
-  return jsonOk({ planVersionId: `${project.id}-${Date.now()}`, project });
+  return jsonOk({
+    planVersionId: project.planVersions.at(-1)?.id ?? `${project.id}-plan`,
+    project,
+  });
 }

@@ -2,16 +2,29 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowRight,
   CheckCircle2,
+  DoorOpen,
   Loader2,
+  Magnet,
   MousePointer2,
   PencilLine,
+  Plus,
+  Redo2,
   Ruler,
   Save,
+  Tags,
   TriangleAlert,
+  Undo2,
+  Wind,
 } from "lucide-react";
 import {
   Circle,
@@ -28,21 +41,39 @@ import type {
   ApiResponse,
   Opening,
   PlanSchema,
+  Room,
   Vec2,
   Wall,
 } from "@renovation-twin/types";
 
-type EditorMode = "select" | "draw";
+type EditorMode = "select" | "draw" | "scale";
 
 type EditableWall = Wall & {
   source: "fixture" | "manual";
 };
 
+type ScaleLine = {
+  start: Vec2;
+  end: Vec2;
+};
+
+type EditorSnapshot = {
+  walls: EditableWall[];
+  openings: Opening[];
+  rooms: Room[];
+  scalePxPerMeter: number;
+  scaleLine: ScaleLine | null;
+  selectedWallId: string;
+  selectedRoomId: string;
+};
+
 const MIN_STAGE_WIDTH = 320;
 const MAX_STAGE_WIDTH = 980;
+const SNAP_DISTANCE_PX = 18;
 const FIXTURE_WALL_STROKE = "#153128";
 const MANUAL_WALL_STROKE = "#1967d2";
 const SELECTED_WALL_STROKE = "#b87745";
+const SCALE_LINE_STROKE = "#7c3aed";
 
 function useMeasuredWidth<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
@@ -130,12 +161,41 @@ function newManualWall(start: Vec2, end: Vec2, index: number): EditableWall {
   };
 }
 
+function getWallBounds(
+  walls: Wall[],
+  imageWidth: number,
+  imageHeight: number,
+): { left: number; top: number; right: number; bottom: number } {
+  if (!walls.length) {
+    return {
+      left: Math.round(imageWidth * 0.18),
+      top: Math.round(imageHeight * 0.18),
+      right: Math.round(imageWidth * 0.82),
+      bottom: Math.round(imageHeight * 0.82),
+    };
+  }
+
+  const points = walls.flatMap((wall) => [wall.start, wall.end]);
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const inset = 18;
+
+  return {
+    left: Math.max(0, Math.min(...xs) + inset),
+    top: Math.max(0, Math.min(...ys) + inset),
+    right: Math.min(imageWidth, Math.max(...xs) - inset),
+    bottom: Math.min(imageHeight, Math.max(...ys) - inset),
+  };
+}
+
 export function PlanEditor({
   plan,
   projectId,
+  projectTitle,
 }: {
   plan: PlanSchema;
   projectId: string;
+  projectTitle: string;
 }) {
   const router = useRouter();
   const image = usePlanImage(plan.image.url);
@@ -153,6 +213,23 @@ export function PlanEditor({
   const [draftStart, setDraftStart] = useState<Vec2 | null>(null);
   const [draftEnd, setDraftEnd] = useState<Vec2 | null>(null);
   const [scalePxPerMeter, setScalePxPerMeter] = useState(plan.scalePxPerMeter);
+  const [scaleLine, setScaleLine] = useState<ScaleLine | null>({
+    start: { x: 80, y: Math.max(80, plan.image.heightPx - 40) },
+    end: {
+      x: Math.min(plan.image.widthPx - 80, 80 + plan.scalePxPerMeter),
+      y: Math.max(80, plan.image.heightPx - 40),
+    },
+  });
+  const [scaleReferenceM, setScaleReferenceM] = useState(1);
+  const [openings, setOpenings] = useState<Opening[]>(plan.openings);
+  const [rooms, setRooms] = useState<Room[]>(plan.rooms);
+  const [selectedRoomId, setSelectedRoomId] = useState(plan.rooms[0]?.id ?? "");
+  const [roomDraftLabel, setRoomDraftLabel] = useState(
+    plan.rooms[0]?.label ?? "Room",
+  );
+  const [newRoomLabel, setNewRoomLabel] = useState("Utility");
+  const [history, setHistory] = useState<EditorSnapshot[]>([]);
+  const [future, setFuture] = useState<EditorSnapshot[]>([]);
   const [saveState, setSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -169,15 +246,110 @@ export function PlanEditor({
   const hasScale = scalePxPerMeter > 0;
   const hasEnoughWalls = walls.length >= 4;
   const isPlanValid = hasScale && hasEnoughWalls;
+  const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
   const wallMap = useMemo(
     () => new Map(walls.map((wall) => [wall.id, wall])),
     [walls],
   );
 
-  const toPlanPoint = (point: Vec2): Vec2 => ({
-    x: Math.round(point.x / scale),
-    y: Math.round(point.y / scale),
-  });
+  function toPlanPoint(point: Vec2): Vec2 {
+    return {
+      x: Math.round(point.x / scale),
+      y: Math.round(point.y / scale),
+    };
+  }
+
+  function pointerToPlanPoint(
+    event: Parameters<
+      NonNullable<ComponentProps<typeof Stage>["onPointerDown"]>
+    >[0],
+  ) {
+    const stage = event.target.getStage();
+    const pointer = stage?.getPointerPosition();
+    return pointer ? toPlanPoint(pointer) : null;
+  }
+
+  function captureSnapshot(): EditorSnapshot {
+    return {
+      walls,
+      openings,
+      rooms,
+      scalePxPerMeter,
+      scaleLine,
+      selectedWallId,
+      selectedRoomId,
+    };
+  }
+
+  function commitHistory() {
+    setHistory((current) => [...current.slice(-23), captureSnapshot()]);
+    setFuture([]);
+    setSaveState("idle");
+    setSaveMessage("Plan has local edits that are not saved yet.");
+  }
+
+  function restoreSnapshot(snapshot: EditorSnapshot) {
+    setWalls(snapshot.walls);
+    setOpenings(snapshot.openings);
+    setRooms(snapshot.rooms);
+    setScalePxPerMeter(snapshot.scalePxPerMeter);
+    setScaleLine(snapshot.scaleLine);
+    setSelectedWallId(snapshot.selectedWallId);
+    setSelectedRoomId(snapshot.selectedRoomId);
+    setSaveState("idle");
+    setSaveMessage("Plan has local edits that are not saved yet.");
+  }
+
+  function undo() {
+    const snapshot = history.at(-1);
+    if (!snapshot) {
+      return;
+    }
+
+    setFuture((current) => [captureSnapshot(), ...current.slice(0, 23)]);
+    setHistory((current) => current.slice(0, -1));
+    restoreSnapshot(snapshot);
+  }
+
+  function redo() {
+    const snapshot = future[0];
+    if (!snapshot) {
+      return;
+    }
+
+    setHistory((current) => [...current.slice(-23), captureSnapshot()]);
+    setFuture((current) => current.slice(1));
+    restoreSnapshot(snapshot);
+  }
+
+  function snapPoint(point: Vec2, start?: Vec2): Vec2 {
+    const endpoints = walls.flatMap((wall) => [wall.start, wall.end]);
+    const nearest = endpoints
+      .map((endpoint) => ({
+        endpoint,
+        distance: Math.hypot(endpoint.x - point.x, endpoint.y - point.y),
+      }))
+      .sort((a, b) => a.distance - b.distance)[0];
+
+    if (nearest && nearest.distance <= SNAP_DISTANCE_PX) {
+      return nearest.endpoint;
+    }
+
+    if (start) {
+      const dx = Math.abs(point.x - start.x);
+      const dy = Math.abs(point.y - start.y);
+
+      if (dx <= SNAP_DISTANCE_PX || dx < dy * 0.22) {
+        return { x: start.x, y: point.y };
+      }
+
+      if (dy <= SNAP_DISTANCE_PX || dy < dx * 0.22) {
+        return { x: point.x, y: start.y };
+      }
+    }
+
+    return point;
+  }
 
   function setWallPoint(wallId: string, key: "start" | "end", point: Vec2) {
     trackManualEditOnce();
@@ -200,7 +372,96 @@ export function PlanEditor({
         heightM: wall.heightM,
         roomIds: wall.roomIds,
       })),
+      openings,
+      rooms,
     };
+  }
+
+  function addOpening(type: Opening["type"]) {
+    if (!selectedWall || !hasScale) {
+      return;
+    }
+
+    const wallLengthM =
+      Math.hypot(
+        selectedWall.end.x - selectedWall.start.x,
+        selectedWall.end.y - selectedWall.start.y,
+      ) / scalePxPerMeter;
+    const widthM = type === "door" ? 0.85 : 1.2;
+
+    commitHistory();
+    trackManualEditOnce();
+    setOpenings((current) => [
+      ...current,
+      {
+        id: `${type}-${current.length + 1}`,
+        type,
+        wallId: selectedWall.id,
+        offsetM: Math.max(0.12, (wallLengthM - widthM) / 2),
+        widthM: Math.min(widthM, Math.max(0.35, wallLengthM - 0.24)),
+        heightM: type === "door" ? 2.1 : 1.2,
+        sillHeightM: type === "window" ? 0.9 : undefined,
+      },
+    ]);
+  }
+
+  function calibrateScale() {
+    if (!scaleLine || scaleReferenceM <= 0) {
+      return;
+    }
+
+    const lengthPx = Math.hypot(
+      scaleLine.end.x - scaleLine.start.x,
+      scaleLine.end.y - scaleLine.start.y,
+    );
+    if (lengthPx < 12) {
+      return;
+    }
+
+    commitHistory();
+    setScalePxPerMeter(Math.max(10, Math.round(lengthPx / scaleReferenceM)));
+  }
+
+  function addRoomLabel() {
+    const bounds = getWallBounds(
+      walls,
+      plan.image.widthPx,
+      plan.image.heightPx,
+    );
+    const label = newRoomLabel.trim() || `Room ${rooms.length + 1}`;
+    const room: Room = {
+      id: `manual-room-${rooms.length + 1}`,
+      label,
+      polygon: [
+        { x: bounds.left, y: bounds.top },
+        { x: bounds.right, y: bounds.top },
+        { x: bounds.right, y: bounds.bottom },
+        { x: bounds.left, y: bounds.bottom },
+      ],
+    };
+
+    commitHistory();
+    trackManualEditOnce();
+    setRooms((current) => [...current, room]);
+    setSelectedRoomId(room.id);
+    setRoomDraftLabel(room.label);
+    setNewRoomLabel(`Room ${rooms.length + 2}`);
+  }
+
+  function renameSelectedRoom(label: string) {
+    setRoomDraftLabel(label);
+    if (!selectedRoom) {
+      return;
+    }
+
+    trackManualEditOnce();
+    setSaveState("idle");
+    setSaveMessage("Plan has local edits that are not saved yet.");
+    setRooms((current) =>
+      current.map((room) =>
+        room.id === selectedRoom.id ? { ...room, label } : room,
+      ),
+    );
   }
 
   function trackManualEditOnce() {
@@ -262,10 +523,10 @@ export function PlanEditor({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d7dfd7] px-4 py-3">
           <div>
             <p className="m-0 text-xs font-extrabold uppercase text-[#0f4ea8]">
-              2D plan editor
+              {projectTitle}
             </p>
             <h1 className="m-0 text-2xl font-black text-[#14201c] md:text-3xl">
-              Confirm the London flat plan.
+              Confirm the floor plan.
             </h1>
           </div>
           <Link
@@ -291,7 +552,7 @@ export function PlanEditor({
           >
             <span className="status-pill">
               <CheckCircle2 size={16} aria-hidden="true" />
-              Sample fixture loaded
+              Plan geometry loaded
             </span>
             <span className="inline-flex min-h-9 items-center rounded-full bg-[rgba(25,103,210,0.1)] px-3 text-sm font-extrabold text-[#0f4ea8]">
               {walls.length} walls
@@ -313,33 +574,40 @@ export function PlanEditor({
               width={stageWidth}
               height={stageHeight}
               onPointerDown={(event) => {
-                if (mode !== "draw") {
+                if (mode !== "draw" && mode !== "scale") {
                   return;
                 }
 
-                const stage = event.target.getStage();
-                const pointer = stage?.getPointerPosition();
-                if (!pointer) {
+                const planPoint = pointerToPlanPoint(event);
+                if (!planPoint) {
                   return;
                 }
 
-                const planPoint = toPlanPoint(pointer);
-                setDraftStart(planPoint);
-                setDraftEnd(planPoint);
+                const nextPoint =
+                  mode === "draw" ? snapPoint(planPoint) : planPoint;
+                setDraftStart(nextPoint);
+                setDraftEnd(nextPoint);
               }}
               onPointerMove={(event) => {
-                if (mode !== "draw" || !draftStart) {
+                if ((mode !== "draw" && mode !== "scale") || !draftStart) {
                   return;
                 }
 
-                const stage = event.target.getStage();
-                const pointer = stage?.getPointerPosition();
-                if (pointer) {
-                  setDraftEnd(toPlanPoint(pointer));
+                const planPoint = pointerToPlanPoint(event);
+                if (planPoint) {
+                  setDraftEnd(
+                    mode === "draw"
+                      ? snapPoint(planPoint, draftStart)
+                      : snapPoint(planPoint, draftStart),
+                  );
                 }
               }}
               onPointerUp={() => {
-                if (mode !== "draw" || !draftStart || !draftEnd) {
+                if (
+                  (mode !== "draw" && mode !== "scale") ||
+                  !draftStart ||
+                  !draftEnd
+                ) {
                   return;
                 }
 
@@ -347,7 +615,12 @@ export function PlanEditor({
                   draftEnd.x - draftStart.x,
                   draftEnd.y - draftStart.y,
                 );
-                if (length >= 16) {
+
+                if (mode === "scale" && length >= 12) {
+                  commitHistory();
+                  setScaleLine({ start: draftStart, end: draftEnd });
+                } else if (mode === "draw" && length >= 16) {
+                  commitHistory();
                   const wall = newManualWall(
                     draftStart,
                     draftEnd,
@@ -378,7 +651,7 @@ export function PlanEditor({
                       opacity={0.72}
                     />
                   ) : null}
-                  {plan.rooms.map((room) => {
+                  {rooms.map((room) => {
                     const center = polygonCenter(room.polygon);
                     return (
                       <Group key={room.id}>
@@ -391,6 +664,14 @@ export function PlanEditor({
                           fill="rgba(25,103,210,0.045)"
                           stroke="rgba(25,103,210,0.22)"
                           strokeWidth={2}
+                          onClick={() => {
+                            setSelectedRoomId(room.id);
+                            setRoomDraftLabel(room.label);
+                          }}
+                          onTap={() => {
+                            setSelectedRoomId(room.id);
+                            setRoomDraftLabel(room.label);
+                          }}
                         />
                         <Rect
                           x={center.x - 58}
@@ -454,10 +735,14 @@ export function PlanEditor({
                               stroke={SELECTED_WALL_STROKE}
                               strokeWidth={4}
                               draggable
+                              onDragStart={() => {
+                                commitHistory();
+                                trackManualEditOnce();
+                              }}
                               onDragMove={(event) =>
                                 setWallPoint(wall.id, "start", {
-                                  x: event.target.x(),
-                                  y: event.target.y(),
+                                  x: Math.round(event.target.x()),
+                                  y: Math.round(event.target.y()),
                                 })
                               }
                             />
@@ -469,10 +754,14 @@ export function PlanEditor({
                               stroke={SELECTED_WALL_STROKE}
                               strokeWidth={4}
                               draggable
+                              onDragStart={() => {
+                                commitHistory();
+                                trackManualEditOnce();
+                              }}
                               onDragMove={(event) =>
                                 setWallPoint(wall.id, "end", {
-                                  x: event.target.x(),
-                                  y: event.target.y(),
+                                  x: Math.round(event.target.x()),
+                                  y: Math.round(event.target.y()),
                                 })
                               }
                             />
@@ -482,7 +771,7 @@ export function PlanEditor({
                     );
                   })}
 
-                  {plan.openings.map((opening) => {
+                  {openings.map((opening) => {
                     const wall = wallMap.get(opening.wallId);
                     const segment = wall
                       ? getOpeningSegment(opening, wall, scalePxPerMeter)
@@ -529,11 +818,47 @@ export function PlanEditor({
                         draftEnd.x,
                         draftEnd.y,
                       ]}
-                      stroke={MANUAL_WALL_STROKE}
-                      strokeWidth={9}
+                      stroke={
+                        mode === "scale"
+                          ? SCALE_LINE_STROKE
+                          : MANUAL_WALL_STROKE
+                      }
+                      strokeWidth={mode === "scale" ? 6 : 9}
                       dash={[12, 8]}
                       lineCap="round"
                     />
+                  ) : null}
+
+                  {scaleLine ? (
+                    <Group>
+                      <Line
+                        points={[
+                          scaleLine.start.x,
+                          scaleLine.start.y,
+                          scaleLine.end.x,
+                          scaleLine.end.y,
+                        ]}
+                        stroke={SCALE_LINE_STROKE}
+                        strokeWidth={5}
+                        lineCap="round"
+                      />
+                      <Circle
+                        x={scaleLine.start.x}
+                        y={scaleLine.start.y}
+                        radius={7}
+                        fill="#ffffff"
+                        stroke={SCALE_LINE_STROKE}
+                        strokeWidth={3}
+                      />
+                      <Circle
+                        x={scaleLine.end.x}
+                        y={scaleLine.end.y}
+                        radius={7}
+                        fill="#ffffff"
+                        stroke={SCALE_LINE_STROKE}
+                        strokeWidth={3}
+                      />
+                    </Group>
                   ) : null}
 
                   <Group x={80} y={660}>
@@ -573,7 +898,7 @@ export function PlanEditor({
       <aside className="grid content-start gap-4">
         <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
           <h2 className="m-0 text-base font-black">Trace controls</h2>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <button
               className={`button ${mode === "select" ? "button-primary" : "button-secondary"}`}
               type="button"
@@ -593,11 +918,68 @@ export function PlanEditor({
             >
               <PencilLine size={18} aria-hidden="true" /> Draw
             </button>
+            <button
+              className={`button ${mode === "scale" ? "button-primary" : "button-secondary"}`}
+              type="button"
+              onClick={() => {
+                setMode("scale");
+                setDraftStart(null);
+                setDraftEnd(null);
+              }}
+            >
+              <Ruler size={18} aria-hidden="true" /> Scale
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={!history.length}
+              onClick={undo}
+            >
+              <Undo2 size={18} aria-hidden="true" /> Undo
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={!future.length}
+              onClick={redo}
+            >
+              <Redo2 size={18} aria-hidden="true" /> Redo
+            </button>
           </div>
           <p className="mt-3 text-sm leading-6 text-[#66736e]">
-            Draw mode adds a wall on release. Select mode lets you drag the
-            highlighted wall endpoints.
+            Draw mode snaps to nearby endpoints and straight axes. Scale mode
+            draws the calibration reference.
           </p>
+        </section>
+
+        <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
+          <h2 className="m-0 flex items-center gap-2 text-base font-black">
+            <DoorOpen size={18} aria-hidden="true" /> Openings
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-[#66736e]">
+            Add an opening to the selected wall at its midpoint, then refine in
+            the saved plan as needed.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={!selectedWall || !hasScale}
+              onClick={() => addOpening("door")}
+            >
+              <DoorOpen size={18} aria-hidden="true" /> Door
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={!selectedWall || !hasScale}
+              onClick={() => addOpening("window")}
+            >
+              <Wind size={18} aria-hidden="true" /> Window
+            </button>
+          </div>
         </section>
 
         <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
@@ -612,15 +994,87 @@ export function PlanEditor({
               min="10"
               max="220"
               value={scalePxPerMeter}
-              onChange={(event) =>
-                setScalePxPerMeter(Number(event.target.value))
-              }
+              onFocus={commitHistory}
+              onChange={(event) => {
+                const nextScale = Number(event.target.value);
+                setScalePxPerMeter(Number.isFinite(nextScale) ? nextScale : 0);
+              }}
             />
           </label>
+          <label className="mt-3 grid gap-2 text-sm font-bold text-[#14201c]">
+            Reference length in metres
+            <input
+              className="min-h-11 rounded-md border border-[#d7dfd7] bg-white px-3 text-base"
+              type="number"
+              min="0.1"
+              max="100"
+              step="0.1"
+              value={scaleReferenceM}
+              onChange={(event) => {
+                const nextReference = Number(event.target.value);
+                setScaleReferenceM(
+                  Number.isFinite(nextReference) ? nextReference : 0,
+                );
+              }}
+            />
+          </label>
+          <button
+            className="button button-secondary mt-3 w-full"
+            type="button"
+            disabled={!scaleLine || scaleReferenceM <= 0}
+            onClick={calibrateScale}
+          >
+            <Ruler size={18} aria-hidden="true" /> Calibrate from line
+          </button>
           <p className="mt-3 text-sm leading-6 text-[#66736e]">
-            The sample fixture ships with scale confirmed. Changing this value
-            updates opening and reference-line overlays.
+            Draw a scale line over a known measurement, enter its real length,
+            then calibrate.
           </p>
+        </section>
+
+        <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
+          <h2 className="m-0 flex items-center gap-2 text-base font-black">
+            <Tags size={18} aria-hidden="true" /> Rooms
+          </h2>
+          <label className="mt-3 grid gap-2 text-sm font-bold text-[#14201c]">
+            Selected room label
+            <input
+              className="min-h-11 rounded-md border border-[#d7dfd7] bg-white px-3 text-base"
+              value={roomDraftLabel}
+              onFocus={commitHistory}
+              onChange={(event) => renameSelectedRoom(event.target.value)}
+            />
+          </label>
+          <label className="mt-3 grid gap-2 text-sm font-bold text-[#14201c]">
+            New room label
+            <input
+              className="min-h-11 rounded-md border border-[#d7dfd7] bg-white px-3 text-base"
+              value={newRoomLabel}
+              onChange={(event) => setNewRoomLabel(event.target.value)}
+            />
+          </label>
+          <button
+            className="button button-secondary mt-3 w-full"
+            type="button"
+            onClick={addRoomLabel}
+          >
+            <Plus size={18} aria-hidden="true" /> Add room label
+          </button>
+          <div className="mt-3 grid gap-2">
+            {rooms.map((room) => (
+              <button
+                className={`button ${room.id === selectedRoomId ? "button-primary" : "button-secondary"} justify-start`}
+                key={room.id}
+                type="button"
+                onClick={() => {
+                  setSelectedRoomId(room.id);
+                  setRoomDraftLabel(room.label);
+                }}
+              >
+                <Tags size={18} aria-hidden="true" /> {room.label}
+              </button>
+            ))}
+          </div>
         </section>
 
         <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
@@ -643,6 +1097,24 @@ export function PlanEditor({
               <dd className="m-0 max-w-[10rem] truncate font-extrabold">
                 {selectedWall?.id ?? "None"}
               </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-[#66736e]">Openings</dt>
+              <dd className="m-0 font-extrabold text-[#2f7d55]">
+                {openings.length}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="text-[#66736e]">Rooms</dt>
+              <dd className="m-0 font-extrabold text-[#2f7d55]">
+                {rooms.length}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <dt className="flex items-center gap-1 text-[#66736e]">
+                <Magnet size={14} aria-hidden="true" /> Snapping
+              </dt>
+              <dd className="m-0 font-extrabold text-[#2f7d55]">On</dd>
             </div>
           </dl>
           {!isPlanValid ? (

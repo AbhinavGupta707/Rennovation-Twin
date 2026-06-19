@@ -25,6 +25,8 @@ type UploadData = {
   planImageUrl: string;
   imageWidth: number;
   imageHeight: number;
+  previewKind: "image" | "pdf-fallback";
+  warning?: string;
   project: {
     status: ProjectStatus;
     uploads: Array<{ fileName: string; mimeType: string; sizeBytes: number }>;
@@ -101,7 +103,8 @@ export function UploadFloorplanPanel({
       });
       setParseResult(null);
       setMessage(
-        "Floor plan attached. Run parse fallback, then confirm the trace.",
+        data.warning ??
+          "Floor plan attached. Run parser proposal, then confirm the trace.",
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Upload failed.");
@@ -129,7 +132,9 @@ export function UploadFloorplanPanel({
       setMessage(
         data.confidence >= 0.8
           ? "Plan parsed with high confidence."
-          : "Fallback parse ready for manual trace.",
+          : data.confidence >= 0.5
+            ? "Parser proposal ready for review."
+            : "Fallback parse ready for manual trace.",
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Parse failed.");
@@ -210,7 +215,7 @@ export function UploadFloorplanPanel({
             ) : (
               <WandSparkles size={18} aria-hidden="true" />
             )}
-            Parse fallback
+            Parse proposal
           </button>
           <Link
             className="button button-primary"

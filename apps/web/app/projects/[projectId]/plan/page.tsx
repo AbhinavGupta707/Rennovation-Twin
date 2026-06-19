@@ -15,7 +15,11 @@ export default async function PlanPage({
   return (
     <ProjectShell projectId={projectId} current="plan">
       <div className="stage-body">
-        <PlanEditor plan={project.plan} projectId={projectId} />
+        <PlanEditor
+          plan={project.plan}
+          projectId={projectId}
+          projectTitle={project.title}
+        />
       </div>
     </ProjectShell>
   );

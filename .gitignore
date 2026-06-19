@@ -1,8 +1,10 @@
 node_modules
+.pnpm-store
 .next
 out
 dist
 coverage
+.renovation-twin-store
 .env
 .env.local
 .env.*.local

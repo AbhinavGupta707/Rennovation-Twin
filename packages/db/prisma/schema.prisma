@@ -22,8 +22,10 @@ model Project {
   currentPlanId   String?
   shareToken      String?       @unique
   events          EventLog[]
+  uploads         UploadAsset[]
   planVersions    PlanVersion[]
   variants        DesignVariant[]
+  reportExports   ReportExport[]
 }
 
 enum ProjectStatus {
@@ -45,6 +47,19 @@ model PlanVersion {
   confidence Float?
   planJson  Json
   createdAt DateTime   @default(now())
+}
+
+model UploadAsset {
+  id           String   @id @default(cuid())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  planImageUrl String
+  imageWidth   Int
+  imageHeight  Int
+  createdAt    DateTime @default(now())
 }
 
 enum PlanSource {
@@ -71,5 +86,12 @@ model EventLog {
   project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   name      String
   props     Json?
+  createdAt DateTime @default(now())
+}
+
+model ReportExport {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 }
