@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BadgeInfo, Palette } from "lucide-react";
+import { BadgeInfo, Palette, TriangleAlert } from "lucide-react";
 import { ProjectShell } from "../../../components/project-shell";
 import { PlanModelViewer } from "../../../../components/three/plan-model-viewer";
 import {
@@ -20,8 +20,16 @@ export default async function ModelPage({
   const { projectId } = await params;
   const { variant } = await searchParams;
   const sourceProject = await getProjectOrDemo(projectId);
-  const generatedProject = await markModelGenerated(sourceProject.id);
-  const project = await markWalkthroughStarted(generatedProject.id);
+  let project = sourceProject;
+  let trackingWarning = false;
+
+  try {
+    const generatedProject = await markModelGenerated(sourceProject.id);
+    project = await markWalkthroughStarted(generatedProject.id);
+  } catch (error) {
+    trackingWarning = true;
+    console.error("Model visit tracking failed", error);
+  }
 
   return (
     <ProjectShell projectId={projectId} current="model">
@@ -30,6 +38,12 @@ export default async function ModelPage({
         <span>{project.variants.length} variants</span>
       </div>
       <div className="stage-body model-stage-body">
+        {trackingWarning ? (
+          <p className="inline-alert alert-danger">
+            <TriangleAlert size={18} aria-hidden="true" />
+            3D view loaded, but this visit could not be saved to the project log.
+          </p>
+        ) : null}
         <div className="model-header">
           <div>
             <p className="eyebrow">3D walkthrough</p>

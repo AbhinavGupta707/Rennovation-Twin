@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   type ComponentProps,
@@ -503,12 +502,14 @@ export function PlanEditor({
         throw new Error(payload.error.message);
       }
 
+      if (navigate) {
+        setSaveMessage("Opening the 3D walkthrough...");
+        router.push(`/projects/${projectId}/model`);
+        return;
+      }
+
       setSaveState("saved");
       setSaveMessage(`Saved ${payload.data.planVersionId}.`);
-
-      if (navigate) {
-        router.push(`/projects/${projectId}/model`);
-      }
     } catch (error) {
       setSaveState("error");
       setSaveMessage(
@@ -529,20 +530,23 @@ export function PlanEditor({
               Confirm the floor plan.
             </h1>
           </div>
-          <Link
-            className={`button button-primary ${isPlanValid ? "" : "pointer-events-none opacity-60"}`}
-            href={`/projects/${projectId}/model`}
+          <button
+            className="button button-primary"
+            type="button"
+            disabled={!isPlanValid || saveState === "saving"}
             aria-disabled={!isPlanValid}
-            onClick={(event) => {
-              event.preventDefault();
+            aria-busy={saveState === "saving"}
+            onClick={() => {
               void savePlan({ navigate: true });
             }}
           >
             {saveState === "saving" ? (
               <Loader2 className="spin-icon" size={18} aria-hidden="true" />
-            ) : null}
-            Generate 3D <ArrowRight size={18} aria-hidden="true" />
-          </Link>
+            ) : (
+              <ArrowRight size={18} aria-hidden="true" />
+            )}
+            {saveState === "saving" ? "Building 3D model..." : "Generate 3D"}
+          </button>
         </div>
 
         <div className="grid gap-4 p-4">

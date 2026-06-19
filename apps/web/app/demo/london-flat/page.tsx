@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ArrowRight, CheckCircle2, Cuboid, FileText } from "lucide-react";
+import { ArrowRight, CheckCircle2, FileText } from "lucide-react";
 import { londonFlatPlan, londonFlatVariants } from "@renovation-twin/fixtures";
+import { GenerateModelButton } from "../../../components/generate-model-button";
 import { PlanSummary } from "../../components/plan-summary";
 
 export default function LondonFlatDemoPage() {
@@ -30,9 +31,7 @@ export default function LondonFlatDemoPage() {
             </p>
             <PlanSummary plan={londonFlatPlan} />
             <div className="button-row">
-              <Link className="button button-primary" href="/projects/demo-london-flat/model">
-                Generate 3D <Cuboid size={18} aria-hidden="true" />
-              </Link>
+              <GenerateModelButton href="/projects/demo-london-flat/model" />
               <Link className="button button-secondary" href="/projects/demo-london-flat/report">
                 Open report <FileText size={18} aria-hidden="true" />
               </Link>

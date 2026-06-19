@@ -210,6 +210,48 @@ a {
   transform: none;
 }
 
+.route-transition-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 32, 28, 0.42);
+  padding: var(--space-4);
+  backdrop-filter: blur(10px);
+}
+
+.route-transition-panel,
+.error-panel {
+  display: grid;
+  gap: var(--space-2);
+  width: min(100%, 30rem);
+  border: 1px solid rgba(20, 32, 28, 0.14);
+  border-radius: 0.65rem;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(20, 32, 28, 0.22);
+  padding: var(--space-5);
+}
+
+.route-transition-panel {
+  justify-items: center;
+  text-align: center;
+}
+
+.route-transition-panel strong {
+  font-size: 1.15rem;
+}
+
+.route-transition-panel span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.error-panel {
+  margin-inline: auto;
+  color: var(--foreground);
+}
+
 .stage {
   overflow: hidden;
   border: 1px solid rgba(20, 32, 28, 0.12);

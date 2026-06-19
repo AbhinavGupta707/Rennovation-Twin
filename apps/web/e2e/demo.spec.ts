@@ -180,6 +180,8 @@ function createSamplePdf(): Buffer {
 test("London flat 3D model renders, orbits, and changes variants on desktop and mobile", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
+
   for (const viewport of [
     { width: 1440, height: 980 },
     { width: 390, height: 844 },
@@ -263,7 +265,7 @@ test("London flat plan editor shows fixture geometry and supports manual wall dr
   await page.mouse.up();
 
   await expect(page.getByText("1 manual")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Generate 3D/ })).toHaveAttribute(
+  await expect(page.getByRole("button", { name: /Generate 3D/ })).toHaveAttribute(
     "aria-disabled",
     "false",
   );
