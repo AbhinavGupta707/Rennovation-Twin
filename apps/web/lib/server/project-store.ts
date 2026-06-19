@@ -22,6 +22,7 @@ export type UploadRecord = {
   planImageUrl: string;
   imageWidth: number;
   imageHeight: number;
+  previewKind?: "image" | "pdf-rendered" | "pdf-fallback";
   createdAt: string;
 };
 
@@ -205,9 +206,7 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
     ]);
 
     return normalizeRuntimeStore({
-      projects: projectRows
-        .map((row) => row.stateJson)
-        .filter(isProjectRecord),
+      projects: projectRows.map((row) => row.stateJson).filter(isProjectRecord),
       shareTokens: Object.fromEntries(
         projectRows.flatMap((row) =>
           row.shareToken ? [[row.shareToken, row.id]] : [],
@@ -463,7 +462,11 @@ export async function attachUpload(
   if (upload.mimeType === "application/pdf") {
     await recordEvent(
       Events.PdfRendered,
-      { projectId, rendered: false, fallback: true },
+      {
+        projectId,
+        rendered: upload.previewKind === "pdf-rendered",
+        fallback: upload.previewKind !== "pdf-rendered",
+      },
       project.id,
     );
   }
@@ -748,21 +751,31 @@ function createDemoParseResponse(plan: PlanSchema) {
 function createUploadedParseResponse(project: ProjectRecord) {
   const latestUpload = project.uploads[0];
   const parsedWalls = latestUpload
-    ? parseUploadedSvgWalls(latestUpload.planImageUrl)
+    ? parseUploadedSvgWalls(
+        latestUpload.planImageUrl,
+        project.plan.image.widthPx,
+        project.plan.image.heightPx,
+      )
     : [];
-  const walls =
-    parsedWalls.length >= 4
-      ? parsedWalls
-      : createBoundingWallProposal(project.plan);
-  const confidence = parsedWalls.length >= 4 ? 0.62 : 0.28;
-  const warnings =
-    parsedWalls.length >= 4
-      ? [
-          "Parser found simple wall-like SVG lines. Review scale, rooms, and openings before generating 3D.",
-        ]
-      : [
-          "Parser used a low-confidence bounding-room proposal. Manual trace remains available.",
-        ];
+  const usedSvgProposal = parsedWalls.length >= 4;
+  const walls = usedSvgProposal
+    ? parsedWalls
+    : createBoundingWallProposal(project.plan);
+  const rooms =
+    project.plan.rooms.length > 0
+      ? project.plan.rooms
+      : createBoundingRoomProposal(project.plan);
+  const confidence = usedSvgProposal
+    ? Math.min(0.78, 0.52 + Math.min(parsedWalls.length, 18) * 0.012)
+    : 0.3;
+  const warnings = usedSvgProposal
+    ? [
+        `Parser found ${parsedWalls.length} normalized SVG wall candidates. Review scale, rooms, and openings before generating 3D.`,
+      ]
+    : [
+        "Parser used a low-confidence bounding-room proposal. Manual trace remains available and is recommended.",
+        "Uploaded raster/PDF plans are not CAD-interpreted; the proposal is only a starting point.",
+      ];
 
   return {
     planProposal: {
@@ -771,7 +784,7 @@ function createUploadedParseResponse(project: ProjectRecord) {
       openings: project.plan.openings.filter((opening) =>
         walls.some((wall) => wall.id === opening.wallId),
       ),
-      rooms: project.plan.rooms,
+      rooms,
     },
     confidence,
     warnings,
@@ -794,7 +807,40 @@ function createBoundingWallProposal(plan: PlanSchema): Wall[] {
   ];
 }
 
-function parseUploadedSvgWalls(planImageUrl: string): Wall[] {
+function createBoundingRoomProposal(plan: PlanSchema): PlanSchema["rooms"] {
+  const marginX = Math.max(36, Math.round(plan.image.widthPx * 0.08));
+  const marginY = Math.max(36, Math.round(plan.image.heightPx * 0.08));
+  const left = marginX;
+  const right = plan.image.widthPx - marginX;
+  const top = marginY;
+  const bottom = plan.image.heightPx - marginY;
+  const areaM2 = Number(
+    (
+      ((right - left) / plan.scalePxPerMeter) *
+      ((bottom - top) / plan.scalePxPerMeter)
+    ).toFixed(1),
+  );
+
+  return [
+    {
+      id: "proposal-room",
+      label: "Trace proposal",
+      polygon: [
+        { x: left, y: top },
+        { x: right, y: top },
+        { x: right, y: bottom },
+        { x: left, y: bottom },
+      ],
+      areaM2,
+    },
+  ];
+}
+
+function parseUploadedSvgWalls(
+  planImageUrl: string,
+  widthPx: number,
+  heightPx: number,
+): Wall[] {
   const svg = decodeSvgDataUrl(planImageUrl);
   if (!svg) {
     return [];
@@ -816,8 +862,39 @@ function parseUploadedSvgWalls(planImageUrl: string): Wall[] {
       x2 !== undefined &&
       y2 !== undefined
     ) {
-      walls.push(createWall(`proposal-line-${walls.length + 1}`, x1, y1, x2, y2));
+      walls.push(
+        createWall(`proposal-line-${walls.length + 1}`, x1, y1, x2, y2),
+      );
     }
+  }
+
+  const rectPattern = /<rect\b([^>]*)>/gi;
+  let rectMatch: RegExpExecArray | null;
+  while ((rectMatch = rectPattern.exec(svg))) {
+    const attrs = readSvgNumberAttributes(rectMatch[1] ?? "");
+    const x = attrs.get("x") ?? 0;
+    const y = attrs.get("y") ?? 0;
+    const width = attrs.get("width");
+    const height = attrs.get("height");
+
+    if (width !== undefined && height !== undefined) {
+      walls.push(...createRectWalls(x, y, width, height, walls.length));
+    }
+  }
+
+  const pointsPattern = /<(?:polyline|polygon)\b([^>]*)>/gi;
+  let pointsMatch: RegExpExecArray | null;
+  while ((pointsMatch = pointsPattern.exec(svg))) {
+    const [, rawPoints = ""] =
+      pointsMatch[1]?.match(/\bpoints\s*=\s*["']([^"']+)["']/i) ?? [];
+    const closeShape = /^<polygon/i.test(pointsMatch[0] ?? "");
+    walls.push(
+      ...parseSvgPoints(
+        rawPoints,
+        closeShape,
+        `proposal-points-${walls.length}`,
+      ),
+    );
   }
 
   const pathPattern = /<path\b[^>]*\sd=["']([^"']+)["'][^>]*>/gi;
@@ -826,13 +903,12 @@ function parseUploadedSvgWalls(planImageUrl: string): Wall[] {
     walls.push(...parseRectilinearPath(pathMatch[1] ?? "", walls.length));
   }
 
-  return mergeCollinearWalls(walls).slice(0, 24);
+  return normalizeWallCandidates(walls, widthPx, heightPx).slice(0, 32);
 }
 
 function readSvgNumberAttributes(markup: string): Map<string, number> {
   const attrs = new Map<string, number>();
-  const attrPattern =
-    /\b([a-zA-Z][\w:-]*)\s*=\s*["']?(-?\d+(?:\.\d+)?)/g;
+  const attrPattern = /\b([a-zA-Z][\w:-]*)\s*=\s*["']?(-?\d+(?:\.\d+)?)/g;
   let match: RegExpExecArray | null;
 
   while ((match = attrPattern.exec(markup))) {
@@ -864,7 +940,8 @@ function decodeSvgDataUrl(dataUrl: string): string | null {
 }
 
 function parseRectilinearPath(pathData: string, offset: number): Wall[] {
-  const tokens = pathData.match(/[MLHVZmlhvz]|-?\d+(?:\.\d+)?/g) ?? [];
+  const tokens =
+    pathData.match(/[MLHVZmlhvz]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) ?? [];
   const walls: Wall[] = [];
   let cursor = { x: 0, y: 0 };
   let start = { x: 0, y: 0 };
@@ -954,6 +1031,80 @@ function parseRectilinearPath(pathData: string, offset: number): Wall[] {
   );
 }
 
+function createRectWalls(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  offset: number,
+): Wall[] {
+  if (width <= 0 || height <= 0) {
+    return [];
+  }
+
+  return [
+    createWall(`proposal-rect-${offset + 1}`, x, y, x + width, y),
+    createWall(
+      `proposal-rect-${offset + 2}`,
+      x + width,
+      y,
+      x + width,
+      y + height,
+    ),
+    createWall(
+      `proposal-rect-${offset + 3}`,
+      x + width,
+      y + height,
+      x,
+      y + height,
+    ),
+    createWall(`proposal-rect-${offset + 4}`, x, y + height, x, y),
+  ];
+}
+
+function parseSvgPoints(
+  rawPoints: string,
+  closeShape: boolean,
+  idPrefix: string,
+): Wall[] {
+  const values =
+    rawPoints.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi)?.map(Number) ?? [];
+  const points: Array<{ x: number; y: number }> = [];
+
+  for (let index = 0; index < values.length - 1; index += 2) {
+    points.push({ x: values[index]!, y: values[index + 1]! });
+  }
+
+  const walls: Wall[] = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    walls.push(
+      createWall(
+        `${idPrefix}-${index + 1}`,
+        points[index]!.x,
+        points[index]!.y,
+        points[index + 1]!.x,
+        points[index + 1]!.y,
+      ),
+    );
+  }
+
+  if (closeShape && points.length > 2) {
+    const first = points[0]!;
+    const last = points.at(-1)!;
+    walls.push(
+      createWall(
+        `${idPrefix}-${points.length}`,
+        last.x,
+        last.y,
+        first.x,
+        first.y,
+      ),
+    );
+  }
+
+  return walls;
+}
+
 function createWall(
   id: string,
   x1: number,
@@ -970,41 +1121,159 @@ function createWall(
   };
 }
 
-function mergeCollinearWalls(walls: Wall[]): Wall[] {
+function normalizeWallCandidates(
+  walls: Wall[],
+  widthPx: number,
+  heightPx: number,
+): Wall[] {
+  const snapped = walls
+    .map((wall) => snapWallToUsefulLine(wall, widthPx, heightPx))
+    .filter((wall): wall is Wall => Boolean(wall));
+  const horizontal = mergeAxisAlignedWalls(
+    snapped.filter((wall) => wall.start.y === wall.end.y),
+    "horizontal",
+  );
+  const vertical = mergeAxisAlignedWalls(
+    snapped.filter((wall) => wall.start.x === wall.end.x),
+    "vertical",
+  );
+  const diagonal = dedupeWalls(
+    snapped.filter(
+      (wall) => wall.start.x !== wall.end.x && wall.start.y !== wall.end.y,
+    ),
+  );
+
+  return dedupeWalls([...horizontal, ...vertical, ...diagonal])
+    .sort((first, second) => wallLength(second) - wallLength(first))
+    .map((wall, index) => ({ ...wall, id: `proposal-wall-${index + 1}` }));
+}
+
+function snapWallToUsefulLine(
+  wall: Wall,
+  widthPx: number,
+  heightPx: number,
+): Wall | null {
+  const length = wallLength(wall);
+  if (!Number.isFinite(length) || length < 24) {
+    return null;
+  }
+
+  const start = {
+    x: clamp(Math.round(wall.start.x), 0, widthPx),
+    y: clamp(Math.round(wall.start.y), 0, heightPx),
+  };
+  const end = {
+    x: clamp(Math.round(wall.end.x), 0, widthPx),
+    y: clamp(Math.round(wall.end.y), 0, heightPx),
+  };
+  const dx = Math.abs(end.x - start.x);
+  const dy = Math.abs(end.y - start.y);
+  const axisTolerance = Math.max(6, Math.round(length * 0.045));
+
+  if (dy <= axisTolerance) {
+    const y = Math.round((start.y + end.y) / 2);
+    return createWall(
+      wall.id,
+      Math.min(start.x, end.x),
+      y,
+      Math.max(start.x, end.x),
+      y,
+    );
+  }
+
+  if (dx <= axisTolerance) {
+    const x = Math.round((start.x + end.x) / 2);
+    return createWall(
+      wall.id,
+      x,
+      Math.min(start.y, end.y),
+      x,
+      Math.max(start.y, end.y),
+    );
+  }
+
+  if (length < 80) {
+    return null;
+  }
+
+  return createWall(wall.id, start.x, start.y, end.x, end.y);
+}
+
+function mergeAxisAlignedWalls(
+  walls: Wall[],
+  axis: "horizontal" | "vertical",
+): Wall[] {
+  const groups = new Map<number, Array<[number, number]>>();
+  const laneTolerance = 7;
+  const gapTolerance = 14;
+
+  for (const wall of walls) {
+    const lane = axis === "horizontal" ? wall.start.y : wall.start.x;
+    const from =
+      axis === "horizontal"
+        ? Math.min(wall.start.x, wall.end.x)
+        : Math.min(wall.start.y, wall.end.y);
+    const to =
+      axis === "horizontal"
+        ? Math.max(wall.start.x, wall.end.x)
+        : Math.max(wall.start.y, wall.end.y);
+    const existingLane = [...groups.keys()].find(
+      (candidate) => Math.abs(candidate - lane) <= laneTolerance,
+    );
+    const groupLane = existingLane ?? lane;
+    groups.set(groupLane, [...(groups.get(groupLane) ?? []), [from, to]]);
+  }
+
+  const merged: Wall[] = [];
+  for (const [lane, ranges] of groups) {
+    const sorted = ranges.sort((first, second) => first[0] - second[0]);
+    const collapsed: Array<[number, number]> = [];
+
+    for (const range of sorted) {
+      const last = collapsed.at(-1);
+      if (last && range[0] <= last[1] + gapTolerance) {
+        last[1] = Math.max(last[1], range[1]);
+      } else {
+        collapsed.push([...range]);
+      }
+    }
+
+    for (const [from, to] of collapsed) {
+      if (to - from >= 24) {
+        merged.push(
+          axis === "horizontal"
+            ? createWall(`merged-h-${merged.length + 1}`, from, lane, to, lane)
+            : createWall(`merged-v-${merged.length + 1}`, lane, from, lane, to),
+        );
+      }
+    }
+  }
+
+  return merged;
+}
+
+function dedupeWalls(walls: Wall[]): Wall[] {
   const unique = new Map<string, Wall>();
 
   for (const wall of walls) {
-    const dx = Math.abs(wall.end.x - wall.start.x);
-    const dy = Math.abs(wall.end.y - wall.start.y);
-    const normalized =
-      dx >= dy
-        ? {
-            ...wall,
-            start: {
-              x: Math.min(wall.start.x, wall.end.x),
-              y: Math.round((wall.start.y + wall.end.y) / 2),
-            },
-            end: {
-              x: Math.max(wall.start.x, wall.end.x),
-              y: Math.round((wall.start.y + wall.end.y) / 2),
-            },
-          }
-        : {
-            ...wall,
-            start: {
-              x: Math.round((wall.start.x + wall.end.x) / 2),
-              y: Math.min(wall.start.y, wall.end.y),
-            },
-            end: {
-              x: Math.round((wall.start.x + wall.end.x) / 2),
-              y: Math.max(wall.start.y, wall.end.y),
-            },
-          };
-    const key = `${normalized.start.x}:${normalized.start.y}:${normalized.end.x}:${normalized.end.y}`;
-    unique.set(key, normalized);
+    const key = [
+      Math.round(wall.start.x / 3),
+      Math.round(wall.start.y / 3),
+      Math.round(wall.end.x / 3),
+      Math.round(wall.end.y / 3),
+    ].join(":");
+    unique.set(key, wall);
   }
 
   return [...unique.values()];
+}
+
+function wallLength(wall: Wall): number {
+  return Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function confidenceBand(confidence: number) {

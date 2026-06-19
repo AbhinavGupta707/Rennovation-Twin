@@ -25,7 +25,7 @@ type UploadData = {
   planImageUrl: string;
   imageWidth: number;
   imageHeight: number;
-  previewKind: "image" | "pdf-fallback";
+  previewKind: "image" | "pdf-rendered" | "pdf-fallback";
   warning?: string;
   project: {
     status: ProjectStatus;
@@ -82,11 +82,16 @@ export function UploadFloorplanPanel({
     setMessage(null);
 
     try {
-      const imageSize = await readImageSize(selectedFile);
+      const preview = await readPlanPreview(selectedFile);
       const formData = new FormData();
       formData.append("file", selectedFile);
-      formData.append("imageWidth", String(imageSize.width));
-      formData.append("imageHeight", String(imageSize.height));
+      formData.append("imageWidth", String(preview.width));
+      formData.append("imageHeight", String(preview.height));
+
+      if (preview.dataUrl) {
+        formData.append("planImageDataUrl", preview.dataUrl);
+        formData.append("previewKind", "pdf-rendered");
+      }
 
       const data = await postForm<UploadData>(
         `/api/projects/${projectId}/upload-floorplan`,
@@ -104,7 +109,9 @@ export function UploadFloorplanPanel({
       setParseResult(null);
       setMessage(
         data.warning ??
-          "Floor plan attached. Run parser proposal, then confirm the trace.",
+          (data.previewKind === "pdf-rendered"
+            ? "PDF first page rendered. Run parser proposal, then confirm the trace."
+            : "Floor plan attached. Run parser proposal, then confirm the trace."),
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Upload failed.");
@@ -337,6 +344,63 @@ async function readImageSize(
     };
     image.src = objectUrl;
   });
+}
+
+async function readPlanPreview(file: File): Promise<{
+  width: number;
+  height: number;
+  dataUrl?: string;
+}> {
+  if (file.type === "application/pdf") {
+    return renderPdfFirstPage(file);
+  }
+
+  return readImageSize(file);
+}
+
+async function renderPdfFirstPage(file: File): Promise<{
+  width: number;
+  height: number;
+  dataUrl?: string;
+}> {
+  try {
+    const pdfjs = await import("pdfjs-dist");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
+
+    const documentTask = pdfjs.getDocument({
+      data: new Uint8Array(await file.arrayBuffer()),
+    });
+    const pdf = await documentTask.promise;
+    const page = await pdf.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = Math.min(2, Math.max(1, 1400 / baseViewport.width));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { alpha: false });
+
+    if (!context) {
+      throw new Error("Canvas rendering context unavailable.");
+    }
+
+    canvas.width = Math.round(viewport.width);
+    canvas.height = Math.round(viewport.height);
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    await page.render({ canvasContext: context, viewport }).promise;
+    await pdf.destroy();
+
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      dataUrl: canvas.toDataURL("image/png"),
+    };
+  } catch {
+    return { width: 980, height: 700 };
+  }
 }
 
 function formatSize(sizeBytes: number): string {

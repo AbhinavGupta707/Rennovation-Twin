@@ -1,4 +1,11 @@
-import { BadgeInfo, Camera, FileText, Layers3, Palette } from "lucide-react";
+import {
+  BadgeInfo,
+  Camera,
+  FileText,
+  Layers3,
+  Palette,
+  TriangleAlert,
+} from "lucide-react";
 import type { ProjectRecord } from "../lib/server/project-store";
 
 export function ReportDeliverable({
@@ -12,6 +19,23 @@ export function ReportDeliverable({
   const variants = project.variants;
   const primaryVariant = variants[0];
   const secondaryVariant = variants[1];
+  const latestUpload = project.uploads[0];
+  const roomBriefs = project.plan.rooms.map((room) => {
+    const notes = variants
+      .flatMap((variant) =>
+        variant.roomNotes
+          .filter((note) => note.roomId === room.id)
+          .map((note) => ({ variantName: variant.name, note })),
+      )
+      .slice(0, 3);
+
+    return { room, notes };
+  });
+  const warnings = [
+    "Concept visualisation only. Not architectural, structural, planning, or contractor-grade advice.",
+    "Measurements and wall proposals must be checked before design, purchase, or build decisions.",
+    ...variants.flatMap((variant) => variant.warnings),
+  ];
   const changedItems = variants.flatMap((variant) =>
     variant.roomNotes.slice(0, 3).flatMap((note) =>
       note.changes.slice(0, 2).map((change) => ({
@@ -50,7 +74,10 @@ export function ReportDeliverable({
           </div>
           <div className="report-image-frame plan-image-frame">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={project.plan.image.url} alt="Confirmed floor plan preview" />
+            <img
+              src={project.plan.image.url}
+              alt="Confirmed floor plan preview"
+            />
           </div>
         </article>
 
@@ -76,7 +103,9 @@ export function ReportDeliverable({
               <div className="screenshot-empty">
                 <Camera size={26} aria-hidden="true" />
                 <strong>No captured 3D view yet</strong>
-                <span>Capture a view from the model page before final export.</span>
+                <span>
+                  Capture a view from the model page before final export.
+                </span>
               </div>
             )}
           </div>
@@ -89,6 +118,10 @@ export function ReportDeliverable({
           <strong>{project.plan.rooms.length}</strong>
         </div>
         <div>
+          <span>Walls</span>
+          <strong>{project.plan.walls.length}</strong>
+        </div>
+        <div>
           <span>Openings</span>
           <strong>{project.plan.openings.length}</strong>
         </div>
@@ -97,9 +130,38 @@ export function ReportDeliverable({
           <strong>{variants.length}</strong>
         </div>
         <div>
-          <span>Exports</span>
-          <strong>{project.reportExports.length}</strong>
+          <span>Scale</span>
+          <strong>{Math.round(project.plan.scalePxPerMeter)} px/m</strong>
         </div>
+      </section>
+
+      <section className="project-summary-brief" aria-label="Project summary">
+        <div>
+          <p className="eyebrow">Project summary</p>
+          <h2>{project.title}</h2>
+          <p>
+            Status: {project.status.toLowerCase().replaceAll("_", " ")}.
+            {latestUpload
+              ? ` Source: ${latestUpload.fileName} (${latestUpload.mimeType}).`
+              : " Source: sample London flat fixture."}
+          </p>
+        </div>
+        <dl>
+          <div>
+            <dt>Captured views</dt>
+            <dd>{project.screenshots.length}</dd>
+          </div>
+          <div>
+            <dt>Report exports</dt>
+            <dd>{project.reportExports.length}</dd>
+          </div>
+          <div>
+            <dt>Share state</dt>
+            <dd>
+              {project.shareToken ? "Public link ready" : "Not shared yet"}
+            </dd>
+          </div>
+        </dl>
       </section>
 
       <section className="comparison-grid" aria-label="Variant comparison">
@@ -166,6 +228,62 @@ export function ReportDeliverable({
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="room-brief-grid" aria-label="Room-by-room brief">
+        <div className="comparison-heading">
+          <FileText size={18} aria-hidden="true" />
+          <h2>Room-by-room brief</h2>
+        </div>
+        {roomBriefs.length ? (
+          roomBriefs.map(({ room, notes }) => (
+            <article key={room.id} className="room-brief-card">
+              <div>
+                <h3>{room.label}</h3>
+                <p>
+                  {room.areaM2 ? `${room.areaM2} m2` : "Area to confirm"} ·{" "}
+                  {room.floorMaterial ?? "finish to confirm"}
+                </p>
+              </div>
+              {notes.length ? (
+                <ul className="compact-list">
+                  {notes.map(({ variantName, note }) => (
+                    <li key={`${room.id}-${variantName}`}>
+                      <strong>{variantName}</strong>
+                      <span>
+                        {note.summary} {note.changes.slice(0, 2).join(", ")}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="hero-copy small-copy">
+                  Keep existing layout; add manual notes during the next review.
+                </p>
+              )}
+            </article>
+          ))
+        ) : (
+          <article className="room-brief-card">
+            <h3>Manual trace needed</h3>
+            <p>Confirm rooms in the plan editor to populate this section.</p>
+          </article>
+        )}
+      </section>
+
+      <section
+        className="report-warning-panel"
+        aria-label="Warnings and disclaimers"
+      >
+        <div className="comparison-heading">
+          <TriangleAlert size={18} aria-hidden="true" />
+          <h2>Warnings and disclaimers</h2>
+        </div>
+        <ul className="warning-list">
+          {[...new Set(warnings)].map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
       </section>
     </div>
   );

@@ -932,7 +932,9 @@ a {
 .report-hero,
 .report-visual-grid,
 .comparison-grid,
-.what-changed {
+.what-changed,
+.room-brief-grid,
+.report-warning-panel {
   display: grid;
   gap: var(--space-3);
 }
@@ -948,7 +950,10 @@ a {
 
 .visual-panel,
 .variant-compare,
-.what-changed {
+.what-changed,
+.project-summary-brief,
+.room-brief-card,
+.report-warning-panel {
   border: 1px solid rgba(20, 32, 28, 0.12);
   border-radius: 0.5rem;
   background: rgba(255, 255, 255, 0.84);
@@ -1043,6 +1048,48 @@ a {
   font-size: 1.5rem;
 }
 
+.project-summary-brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.8fr);
+  gap: var(--space-4);
+}
+
+.project-summary-brief h2,
+.room-brief-card h3 {
+  margin: 0.25rem 0 0;
+}
+
+.project-summary-brief p,
+.room-brief-card p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.project-summary-brief dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.project-summary-brief dl div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  padding-block: 0.65rem;
+}
+
+.project-summary-brief dt {
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.project-summary-brief dd {
+  margin: 0;
+  font-weight: 900;
+}
+
 .comparison-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1068,6 +1115,19 @@ a {
   padding-top: var(--space-2);
 }
 
+.room-brief-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.room-brief-card {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.room-brief-card .compact-list li {
+  gap: var(--space-1);
+}
+
 .spin-icon {
   animation: spin 900ms linear infinite;
 }
@@ -1084,7 +1144,9 @@ a {
   .workflow-grid,
   .variant-grid,
   .report-visual-grid,
-  .comparison-grid {
+  .comparison-grid,
+  .project-summary-brief,
+  .room-brief-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1158,5 +1220,52 @@ a {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .topbar,
+  .sidebar,
+  .stage-toolbar,
+  .tool-panel,
+  .button-row,
+  .model-stage-body {
+    display: none !important;
+  }
+
+  .container,
+  .workflow {
+    width: 100%;
+    max-width: none;
+    display: block;
+  }
+
+  .stage,
+  .stage-body,
+  .report-deliverable,
+  .visual-panel,
+  .variant-compare,
+  .what-changed,
+  .project-summary-brief,
+  .room-brief-card,
+  .report-warning-panel {
+    border: 0;
+    box-shadow: none;
+    background: #ffffff;
+  }
+
+  .report-visual-grid,
+  .comparison-grid,
+  .room-brief-grid,
+  .report-kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .report-deliverable {
+    gap: 1rem;
   }
 }
