@@ -8,7 +8,12 @@ import {
   useState,
 } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
-import { Environment, Html, OrbitControls } from "@react-three/drei";
+import {
+  Environment,
+  Html,
+  OrbitControls,
+  PerspectiveCamera,
+} from "@react-three/drei";
 import { Camera, Pause, Play, ScanSearch } from "lucide-react";
 import type {
   ApiResponse,
@@ -46,6 +51,7 @@ type CameraPreset = {
   description: string;
   position: [number, number, number];
   target: [number, number, number];
+  fov: number;
 };
 
 export function PlanModelViewer({
@@ -60,7 +66,10 @@ export function PlanModelViewer({
   const defaultVariantName =
     allVariants.find((variant) => variant.name === initialVariantName)?.name ?? allVariants[1]?.name ?? allVariants[0]!.name;
   const [activeVariantName, setActiveVariantName] = useState(defaultVariantName);
-  const cameraPresets = useMemo(() => createCameraPresets(scene), [scene]);
+  const cameraPresets = useMemo(
+    () => createCameraPresets(scene, plan),
+    [scene, plan],
+  );
   const [activeCameraPresetId, setActiveCameraPresetId] =
     useState<CameraPreset["id"]>("overview");
   const [guidedMode, setGuidedMode] = useState(false);
@@ -92,10 +101,13 @@ export function PlanModelViewer({
 
     const timer = window.setInterval(() => {
       setActiveCameraPresetId((current) => {
-        const currentIndex = cameraPresets.findIndex(
+        const tourPresets = cameraPresets.filter(
+          (preset) => preset.id !== "overview",
+        );
+        const currentIndex = tourPresets.findIndex(
           (preset) => preset.id === current,
         );
-        return cameraPresets[(currentIndex + 1) % cameraPresets.length]!.id;
+        return tourPresets[(currentIndex + 1) % tourPresets.length]!.id;
       });
     }, 2600);
 
@@ -180,7 +192,13 @@ export function PlanModelViewer({
           type="button"
           className="camera-preset"
           aria-pressed={guidedMode}
-          onClick={() => setGuidedMode((current) => !current)}
+          onClick={() => {
+            const nextGuidedMode = !guidedMode;
+            setGuidedMode(nextGuidedMode);
+            if (nextGuidedMode && activeCameraPresetId === "overview") {
+              setActiveCameraPresetId("walkthrough");
+            }
+          }}
         >
           {guidedMode ? (
             <Pause size={16} aria-hidden="true" />
@@ -213,19 +231,20 @@ export function PlanModelViewer({
       <div className="model-canvas-shell">
         <Canvas
           shadows
-          camera={{ position: activeCameraPreset.position, fov: 42, near: 0.1, far: 100 }}
           dpr={[1, 1.75]}
           gl={{ preserveDrawingBuffer: true }}
-          onCreated={({ camera, gl }) => {
+          onCreated={({ gl }) => {
             canvasRef.current = gl.domElement;
-            camera.lookAt(
-              activeCameraPreset.target[0],
-              activeCameraPreset.target[1],
-              activeCameraPreset.target[2],
-            );
           }}
           aria-label="Interactive 3D renovation model"
         >
+          <PerspectiveCamera
+            makeDefault
+            position={activeCameraPreset.position}
+            fov={activeCameraPreset.fov}
+            near={0.08}
+            far={100}
+          />
           <color attach="background" args={["#e9eee7"]} />
           <ambientLight intensity={0.72} />
           <directionalLight
@@ -272,9 +291,9 @@ function CameraControlsRig({ preset }: { preset: CameraPreset }) {
       makeDefault
       enableDamping
       dampingFactor={0.08}
-      minDistance={2.2}
+      minDistance={preset.id === "overview" ? 2.2 : 0.35}
       maxDistance={30}
-      maxPolarAngle={Math.PI / 2.08}
+      maxPolarAngle={preset.id === "overview" ? Math.PI / 2.08 : Math.PI / 1.78}
     />
   );
 }
@@ -449,12 +468,40 @@ function TableLeg({ x, z, height, color }: { x: number; z: number; height: numbe
 
 function createCameraPresets(
   scene: ReturnType<typeof planToSceneSpec>,
+  plan: PlanSchema,
 ): CameraPreset[] {
   const width = Math.max(scene.bounds.widthM, 3);
   const depth = Math.max(scene.bounds.depthM, 3);
-  const center: [number, number, number] = [width / 2, 0.2, depth / 2];
-  const living = findRoomTarget(scene, /living|dining|kitchen/i, center);
-  const bedroom = findRoomTarget(scene, /bed|office|guest/i, center);
+  const planCenter = { x: width / 2, z: depth / 2 };
+  const overviewTarget: [number, number, number] = [
+    planCenter.x,
+    0.2,
+    planCenter.z,
+  ];
+  const rooms = getRoomCameraBounds(plan);
+  const wholePlan: RoomCameraBounds = {
+    id: "whole-plan",
+    label: "Plan",
+    minX: 0,
+    maxX: width,
+    minZ: 0,
+    maxZ: depth,
+    center: planCenter,
+    width,
+    depth,
+  };
+  const living =
+    findRoomBounds(rooms, /living|dining|lounge|kitchen/i) ??
+    findLargestRoom(rooms) ??
+    wholePlan;
+  const bedroom =
+    findRoomBounds(rooms, /bed|office|guest|study/i) ??
+    findLargestRoom(rooms.filter((room) => room.id !== living.id)) ??
+    living;
+  const hall =
+    findRoomBounds(rooms, /hall|entry|entrance|corridor|foyer/i) ??
+    findSmallestRoom(rooms) ??
+    wholePlan;
 
   return [
     {
@@ -462,51 +509,194 @@ function createCameraPresets(
       label: "Overview",
       description: "Top-down camera for reading the whole floor plan.",
       position: [width / 2, Math.max(width, depth) * 0.78, depth * 1.18],
-      target: center,
+      target: overviewTarget,
+      fov: 56,
     },
-    {
+    createRoomCameraPreset({
       id: "living",
       label: "Living",
-      description: "Lower camera aimed at the living and dining zone.",
-      position: [
-        Math.min(width - 0.8, living[0] + 2.2),
-        2.2,
-        Math.min(depth - 0.8, living[2] + 2.4),
-      ],
-      target: living,
-    },
-    {
+      description: "Eye-level camera standing inside the living and dining zone.",
+      room: living,
+      planCenter,
+    }),
+    createRoomCameraPreset({
       id: "bedroom",
       label: "Bedroom / office",
-      description: "Camera aimed at the sleep, work, or guest zone.",
-      position: [
-        Math.max(0.8, bedroom[0] - 2.4),
-        2.05,
-        Math.min(depth - 0.6, bedroom[2] + 1.8),
-      ],
-      target: bedroom,
-    },
-    {
-      id: "walkthrough",
-      label: "Walkthrough",
-      description: "Eye-level guided camera from the plan entrance.",
-      position: [Math.max(0.9, width * 0.18), 1.55, Math.max(0.9, depth * 0.86)],
-      target: [width * 0.58, 1.2, depth * 0.48],
-    },
+      description:
+        "Eye-level camera standing inside the sleep, work, or guest zone.",
+      room: bedroom,
+      planCenter,
+    }),
+    createWalkthroughPreset(hall, living, planCenter),
   ];
 }
 
-function findRoomTarget(
-  scene: ReturnType<typeof planToSceneSpec>,
-  pattern: RegExp,
-  fallback: [number, number, number],
-): [number, number, number] {
-  const room = scene.roomLabels.find((label) => pattern.test(label.label));
-  if (!room) {
-    return fallback;
-  }
+type RoomCameraBounds = {
+  id: string;
+  label: string;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  center: { x: number; z: number };
+  width: number;
+  depth: number;
+};
 
-  return [room.position[0], 1.1, room.position[2]];
+function getRoomCameraBounds(plan: PlanSchema): RoomCameraBounds[] {
+  return plan.rooms
+    .map((room) => {
+      const points = room.polygon.map((point) => ({
+        x: point.x / plan.scalePxPerMeter,
+        z: point.y / plan.scalePxPerMeter,
+      }));
+      const xs = points.map((point) => point.x);
+      const zs = points.map((point) => point.z);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minZ = Math.min(...zs);
+      const maxZ = Math.max(...zs);
+      const width = maxX - minX;
+      const depth = maxZ - minZ;
+
+      return {
+        id: room.id,
+        label: room.label,
+        minX,
+        maxX,
+        minZ,
+        maxZ,
+        center: { x: minX + width / 2, z: minZ + depth / 2 },
+        width,
+        depth,
+      };
+    })
+    .filter((room) => room.width > 0.2 && room.depth > 0.2);
+}
+
+function createRoomCameraPreset({
+  id,
+  label,
+  description,
+  room,
+  planCenter,
+}: {
+  id: CameraPreset["id"];
+  label: string;
+  description: string;
+  room: RoomCameraBounds;
+  planCenter: { x: number; z: number };
+}): CameraPreset {
+  const inset = getRoomInset(room);
+  const innerMinX = room.minX + inset;
+  const innerMaxX = room.maxX - inset;
+  const innerMinZ = room.minZ + inset;
+  const innerMaxZ = room.maxZ - inset;
+  const corners = [
+    { x: innerMinX, z: innerMinZ },
+    { x: innerMaxX, z: innerMinZ },
+    { x: innerMinX, z: innerMaxZ },
+    { x: innerMaxX, z: innerMaxZ },
+  ];
+  const positionPoint = corners.reduce((best, point) =>
+    distanceSquared(point, planCenter) > distanceSquared(best, planCenter)
+      ? point
+      : best,
+  );
+  const oppositePoint = {
+    x: positionPoint.x < room.center.x ? innerMaxX : innerMinX,
+    z: positionPoint.z < room.center.z ? innerMaxZ : innerMinZ,
+  };
+  const targetPoint = {
+    x: room.center.x * 0.42 + oppositePoint.x * 0.58,
+    z: room.center.z * 0.42 + oppositePoint.z * 0.58,
+  };
+
+  return {
+    id,
+    label,
+    description,
+    position: [positionPoint.x, 1.55, positionPoint.z],
+    target: [targetPoint.x, 1.32, targetPoint.z],
+    fov: 64,
+  };
+}
+
+function createWalkthroughPreset(
+  startRoom: RoomCameraBounds,
+  targetRoom: RoomCameraBounds,
+  planCenter: { x: number; z: number },
+): CameraPreset {
+  const inset = getRoomInset(targetRoom);
+  const innerMinX = targetRoom.minX + inset;
+  const innerMaxX = targetRoom.maxX - inset;
+  const innerMinZ = targetRoom.minZ + inset;
+  const innerMaxZ = targetRoom.maxZ - inset;
+  const corners = [
+    { x: innerMinX, z: innerMinZ },
+    { x: innerMaxX, z: innerMinZ },
+    { x: innerMinX, z: innerMaxZ },
+    { x: innerMaxX, z: innerMaxZ },
+  ];
+  const positionPoint =
+    targetRoom.id === startRoom.id
+      ? corners.reduce((best, point) =>
+          distanceSquared(point, planCenter) >
+          distanceSquared(best, planCenter)
+            ? point
+            : best,
+        )
+      : corners.reduce((best, point) =>
+          distanceSquared(point, startRoom.center) <
+          distanceSquared(best, startRoom.center)
+            ? point
+            : best,
+        );
+  const oppositePoint = {
+    x: positionPoint.x < targetRoom.center.x ? innerMaxX : innerMinX,
+    z: positionPoint.z < targetRoom.center.z ? innerMaxZ : innerMinZ,
+  };
+  const targetPoint = {
+    x: targetRoom.center.x * 0.28 + oppositePoint.x * 0.72,
+    z: targetRoom.center.z * 0.28 + oppositePoint.z * 0.72,
+  };
+
+  return {
+    id: "walkthrough",
+    label: "Walkthrough",
+    description:
+      "Human-height camera from the room entry side across the main space.",
+    position: [positionPoint.x, 1.55, positionPoint.z],
+    target: [targetPoint.x, 1.34, targetPoint.z],
+    fov: 68,
+  };
+}
+
+function getRoomInset(room: RoomCameraBounds) {
+  return Math.min(Math.max(Math.min(room.width, room.depth) * 0.18, 0.45), 0.85);
+}
+
+function findRoomBounds(rooms: RoomCameraBounds[], pattern: RegExp) {
+  return rooms.find((room) => pattern.test(room.label) || pattern.test(room.id));
+}
+
+function findLargestRoom(rooms: RoomCameraBounds[]) {
+  return [...rooms].sort(
+    (left, right) => right.width * right.depth - left.width * left.depth,
+  )[0];
+}
+
+function findSmallestRoom(rooms: RoomCameraBounds[]) {
+  return [...rooms].sort(
+    (left, right) => left.width * left.depth - right.width * right.depth,
+  )[0];
+}
+
+function distanceSquared(
+  left: { x: number; z: number },
+  right: { x: number; z: number },
+) {
+  return (left.x - right.x) ** 2 + (left.z - right.z) ** 2;
 }
 
 function createBaseFurniture(plan: PlanSchema, variant: DesignVariantSchema): FurnitureItem[] {
