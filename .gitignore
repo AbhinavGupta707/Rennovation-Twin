@@ -8,6 +8,7 @@ coverage
 .env
 .env.local
 .env.*.local
+*-vercel.env
 *.tsbuildinfo
 .DS_Store
 playwright-report
