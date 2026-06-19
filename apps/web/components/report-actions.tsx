@@ -49,7 +49,7 @@ export function ReportActions({ projectId }: { projectId: string }) {
         `/api/projects/${projectId}/share`,
         {},
       );
-      setShareUrl(data.shareUrl);
+      setShareUrl(`/share/${data.shareToken}`);
       setMessage("Share view is ready.");
     } catch (error) {
       setMessage(

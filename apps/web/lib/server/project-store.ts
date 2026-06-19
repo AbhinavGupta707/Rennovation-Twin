@@ -99,8 +99,16 @@ const globalStore = globalThis as unknown as {
 };
 
 async function getStore(): Promise<RuntimeStore> {
+  const adapter = getAdapter();
+
+  if (adapter.mode === "prisma") {
+    const store = await adapter.read();
+    seedDemoProject(store);
+    return store;
+  }
+
   if (!globalStore.renovationTwinStorePromise) {
-    globalStore.renovationTwinStorePromise = getAdapter().read();
+    globalStore.renovationTwinStorePromise = adapter.read();
   }
 
   const store = await globalStore.renovationTwinStorePromise;
@@ -244,7 +252,10 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
         await transaction.eventLog.createMany({
           data: store.events.map((event) => ({
             name: event.name,
-            projectId: event.projectId,
+            projectId:
+              event.projectId && store.projects.has(event.projectId)
+                ? event.projectId
+                : null,
             props: event.props ?? {},
             createdAt: new Date(event.createdAt),
           })),
@@ -377,9 +388,19 @@ export async function recordEvent(
   projectId?: string,
 ): Promise<TrackedEvent> {
   const store = await getStore();
+  const event = recordEventInStore(store, name, props, projectId);
+  await persistStore(store);
+  return event;
+}
+
+function recordEventInStore(
+  store: RuntimeStore,
+  name: EventName,
+  props?: EventProps,
+  projectId?: string,
+): TrackedEvent {
   const event = trackEvent(name, props, projectId);
   store.events.push(event);
-  await persistStore(store);
   return event;
 }
 
@@ -422,7 +443,8 @@ export async function createProject({
   };
 
   store.projects.set(project.id, project);
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.ProjectCreated,
     { hasPostcode: Boolean(project.postcode) },
     project.id,
@@ -436,7 +458,7 @@ export async function attachUpload(
   upload: UploadRecord,
 ): Promise<ProjectRecord> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
   const nextPlan = createManualFallbackPlan(upload);
 
   project.uploads.unshift(upload);
@@ -447,7 +469,8 @@ export async function attachUpload(
     createPlanVersion(project, nextPlan, "MANUAL_EDIT"),
   );
 
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.FloorplanUploaded,
     {
       projectId,
@@ -460,7 +483,8 @@ export async function attachUpload(
   );
 
   if (upload.mimeType === "application/pdf") {
-    await recordEvent(
+    recordEventInStore(
+      store,
       Events.PdfRendered,
       {
         projectId,
@@ -481,10 +505,10 @@ export async function parsePlan(projectId: string): Promise<{
   warnings: string[];
 }> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
   const isDemo = project.id === "demo-london-flat";
 
-  await recordEvent(Events.PlanParseStarted, { projectId }, project.id);
+  recordEventInStore(store, Events.PlanParseStarted, { projectId }, project.id);
 
   const response = isDemo
     ? createDemoParseResponse(project.plan)
@@ -502,7 +526,8 @@ export async function parsePlan(projectId: string): Promise<{
     ),
   );
 
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.PlanParseCompleted,
     {
       projectId,
@@ -523,19 +548,21 @@ export async function savePlan(
   plan: PlanSchema,
 ): Promise<ProjectRecord> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
 
   project.plan = plan;
   project.status = "PLAN_CONFIRMED";
   project.updatedAt = new Date().toISOString();
   project.planVersions.push(createPlanVersion(project, plan, "MANUAL_EDIT"));
 
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.ScaleConfirmed,
     { projectId, scalePxPerMeter: plan.scalePxPerMeter },
     project.id,
   );
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.PlanConfirmed,
     {
       projectId,
@@ -556,7 +583,7 @@ export async function saveVariant(
   props?: Record<string, string | number | boolean | null | undefined>,
 ): Promise<ProjectRecord> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
 
   project.variants = [
     variant,
@@ -565,7 +592,8 @@ export async function saveVariant(
   project.status = "VARIANTS_GENERATED";
   project.updatedAt = new Date().toISOString();
 
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.VariantGenerated,
     { projectId, style: variant.style, ...props },
     project.id,
@@ -578,7 +606,7 @@ export async function markModelGenerated(
   projectId: string,
 ): Promise<ProjectRecord> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
 
   if (
     project.status === "PLAN_CONFIRMED" ||
@@ -589,7 +617,8 @@ export async function markModelGenerated(
     project.updatedAt = new Date().toISOString();
   }
 
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.ModelGenerated,
     {
       projectId,
@@ -606,8 +635,10 @@ export async function markModelGenerated(
 export async function markWalkthroughStarted(
   projectId: string,
 ): Promise<ProjectRecord> {
-  const project = await ensureProject(projectId);
-  await recordEvent(Events.WalkthroughStarted, { projectId }, project.id);
+  const store = await getStore();
+  const project = await ensureProject(projectId, store);
+  recordEventInStore(store, Events.WalkthroughStarted, { projectId }, project.id);
+  await persistStore(store);
   return project;
 }
 
@@ -615,14 +646,15 @@ export async function markReportExported(
   projectId: string,
 ): Promise<ProjectRecord> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
   const latestScreenshot = project.screenshots[0];
   project.reportExports.unshift({
     id: `${project.id}-report-${Date.now()}`,
     screenshotId: latestScreenshot?.id,
     createdAt: new Date().toISOString(),
   });
-  await recordEvent(
+  recordEventInStore(
+    store,
     Events.ReportExported,
     { projectId, variantCount: project.variants.length },
     project.id,
@@ -636,7 +668,7 @@ export async function saveProjectScreenshot(
   screenshot: Omit<ProjectScreenshotRecord, "id" | "createdAt">,
 ): Promise<ProjectScreenshotRecord> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
   const record: ProjectScreenshotRecord = {
     ...screenshot,
     id: `${project.id}-screenshot-${Date.now()}`,
@@ -654,7 +686,7 @@ export async function createShare(projectId: string): Promise<{
   shareToken: string;
 }> {
   const store = await getStore();
-  const project = await ensureProject(projectId);
+  const project = await ensureProject(projectId, store);
 
   if (!project.shareToken) {
     project.shareToken = crypto.randomUUID().replaceAll("-", "");
@@ -664,7 +696,7 @@ export async function createShare(projectId: string): Promise<{
   project.status = "SHARED";
   project.updatedAt = new Date().toISOString();
 
-  await recordEvent(Events.ShareCreated, { projectId }, project.id);
+  recordEventInStore(store, Events.ShareCreated, { projectId }, project.id);
   await persistStore(store);
   return { project, shareToken: project.shareToken };
 }
@@ -682,9 +714,12 @@ export async function getProjectByShareToken(
   return store.projects.get(projectId);
 }
 
-async function ensureProject(projectId: string): Promise<ProjectRecord> {
-  const store = await getStore();
-  const project = await getProject(projectId);
+async function ensureProject(
+  projectId: string,
+  store?: RuntimeStore,
+): Promise<ProjectRecord> {
+  const targetStore = store ?? (await getStore());
+  const project = targetStore.projects.get(projectId);
 
   if (project) {
     return project;
@@ -705,7 +740,7 @@ async function ensureProject(projectId: string): Promise<ProjectRecord> {
     screenshots: [],
   };
 
-  store.projects.set(projectId, fallback);
+  targetStore.projects.set(projectId, fallback);
   return fallback;
 }
 

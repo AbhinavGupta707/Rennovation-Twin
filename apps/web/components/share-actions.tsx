@@ -31,7 +31,7 @@ export function ShareActions({
         `/api/projects/${projectId}/share`,
         {},
       );
-      setShareUrl(data.shareUrl);
+      setShareUrl(`/share/${data.shareToken}`);
       setMessage("Share link created.");
     } catch (error) {
       setMessage(

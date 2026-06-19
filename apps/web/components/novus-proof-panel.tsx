@@ -97,13 +97,15 @@ export function NovusProofPanel({
               <div role="row" key={`${event.name}-${event.createdAt}`}>
                 <span role="cell">{event.name}</span>
                 <span role="cell">{event.projectId ?? "n/a"}</span>
-                <span role="cell">
-                  {new Date(event.createdAt).toLocaleTimeString()}
-                </span>
+                <span role="cell">{formatEventTime(event.createdAt)}</span>
               </div>
             ))}
         </div>
       </section>
     </div>
   );
+}
+
+function formatEventTime(value: string) {
+  return new Date(value).toISOString().slice(11, 19);
 }
