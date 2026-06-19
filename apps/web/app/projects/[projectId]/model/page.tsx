@@ -1,30 +1,37 @@
 import Link from "next/link";
-import { Palette } from "lucide-react";
-import { londonFlatPlan } from "@renovation-twin/fixtures";
-import { getPlanBoundsMeters, planToWallMeshSpecs } from "@renovation-twin/geometry";
+import { BadgeInfo, Palette } from "lucide-react";
+import { londonFlatPlan, londonFlatVariants } from "@renovation-twin/fixtures";
 import { ProjectShell } from "../../../components/project-shell";
+import { PlanModelViewer } from "../../../../components/three/plan-model-viewer";
 
-export default async function ModelPage({ params }: { params: Promise<{ projectId: string }> }) {
+export default async function ModelPage({
+  params,
+  searchParams
+}: {
+  params: Promise<{ projectId: string }>;
+  searchParams: Promise<{ variant?: string }>;
+}) {
   const { projectId } = await params;
-  const bounds = getPlanBoundsMeters(londonFlatPlan);
-  const wallMeshCount = planToWallMeshSpecs(londonFlatPlan).length;
+  const { variant } = await searchParams;
 
   return (
     <ProjectShell projectId={projectId} current="model">
       <div className="stage-toolbar">
-        <span className="status-pill">3D contract scaffolded</span>
-        <span>{wallMeshCount} wall meshes</span>
+        <span className="status-pill">Interactive model ready</span>
+        <span>{londonFlatVariants.length} deterministic variants</span>
       </div>
-      <div className="stage-body">
-        <p className="eyebrow">3D walkthrough</p>
-        <h1 className="hero-title">Walk the model.</h1>
-        <div className="model-placeholder" aria-label="3D placeholder model">
-          <div className="model-floor" />
+      <div className="stage-body model-stage-body">
+        <div className="model-header">
+          <div>
+            <p className="eyebrow">3D walkthrough</p>
+            <h1 className="model-title">London flat model</h1>
+          </div>
+          <div className="model-disclaimer">
+            <BadgeInfo size={16} aria-hidden="true" />
+            Concept visualisation only
+          </div>
         </div>
-        <p>
-          Plan bounds: {bounds.widthM.toFixed(1)}m by {bounds.depthM.toFixed(1)}m. React Three Fiber implementation
-          belongs to the 3D renderer thread.
-        </p>
+        <PlanModelViewer plan={londonFlatPlan} variants={londonFlatVariants} initialVariantName={variant} />
         <div className="button-row">
           <Link className="button button-primary" href={`/projects/${projectId}/design`}>
             Choose variants <Palette size={18} aria-hidden="true" />
