@@ -77,6 +77,7 @@ export function PlanModelViewer({ plan, variants, initialVariantName }: ViewerPr
           shadows
           camera={{ position: cameraPosition, fov: 42, near: 0.1, far: 100 }}
           dpr={[1, 1.75]}
+          gl={{ preserveDrawingBuffer: true }}
           onCreated={({ camera }) => {
             camera.lookAt(target[0], target[1], target[2]);
           }}

@@ -9,10 +9,12 @@
     "lint": "pnpm --filter @renovation-twin/web lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "test:e2e": "playwright test",
     "format": "prettier --write .",
     "db:generate": "pnpm --filter @renovation-twin/db generate"
   },
   "devDependencies": {
+    "@playwright/test": "1.57.0",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3"
   }
