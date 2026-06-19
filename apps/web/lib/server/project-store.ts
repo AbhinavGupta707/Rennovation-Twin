@@ -118,10 +118,7 @@ function getAdapter(): ProjectStoreAdapter {
 }
 
 function shouldUsePrismaStore() {
-  return (
-    Boolean(process.env.DATABASE_URL) &&
-    process.env.RENOVATION_TWIN_STORE_ADAPTER !== "json-file"
-  );
+  return process.env.RENOVATION_TWIN_STORE_ADAPTER === "prisma";
 }
 
 function getStoreFilePath() {

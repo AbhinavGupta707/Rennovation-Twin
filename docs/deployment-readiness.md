@@ -31,9 +31,10 @@ event logs. This keeps the app deployable quickly while preserving the existing 
 fallback and shared product contracts.
 
 Use `/api/health/persistence` after deploy to prove the active store can read from the
-configured adapter. With `RENOVATION_TWIN_STORE_ADAPTER="prisma"`, a `200` response means
-the app has reached Supabase/Postgres; a `503` response means the database URL, pooler,
-schema, or Prisma client needs attention.
+configured adapter. The app only uses Supabase/Postgres when
+`RENOVATION_TWIN_STORE_ADAPTER="prisma"` is set explicitly. In that mode, a `200` response
+means the app has reached Supabase/Postgres; a `503` response means the database URL,
+pooler, schema, or Prisma client needs attention.
 
 ## Supabase Hosted Setup
 
@@ -75,6 +76,6 @@ server-side Prisma role and do not query these tables directly from the browser.
 
 - Store captured screenshots as database JSON for the hackathon path; object storage is a
   later hardening step.
-- Keep `RENOVATION_TWIN_STORE_ADAPTER="json-file"` only for local development or demos that
-  do not need serverless persistence.
+- Leave `RENOVATION_TWIN_STORE_ADAPTER` unset, or set it to `"json-file"`, for local
+  development and demos that do not need serverless persistence.
 - Fireworks remains optional because deterministic variants are still the fallback.
