@@ -6,14 +6,6 @@ const appDir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(appDir, "../.."),
-  outputFileTracingIncludes: {
-    "/*": [
-      "../../node_modules/.pnpm/@prisma+client*/node_modules/.prisma/client/**/*",
-      "../../node_modules/.pnpm/@prisma+client*/node_modules/@prisma/client/**/*",
-      "../../node_modules/.prisma/client/**/*",
-      "../../node_modules/@prisma/client/**/*"
-    ]
-  },
   serverExternalPackages: ["@prisma/client", "@prisma/adapter-pg", "pg"],
   transpilePackages: [
     "@renovation-twin/ai",
