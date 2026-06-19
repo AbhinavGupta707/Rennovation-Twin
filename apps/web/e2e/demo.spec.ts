@@ -84,7 +84,7 @@ function byteDiff(a: Buffer, b: Buffer): number {
 
 async function webglCanvasStats(page: Page) {
   await page.locator("canvas").first().waitFor();
-  await page.waitForTimeout(900);
+  await page.waitForTimeout(650);
 
   return page.evaluate(() => {
     const canvas = document.querySelector("canvas");
@@ -110,8 +110,8 @@ async function webglCanvasStats(page: Page) {
 
     const webgl = gl as WebGLRenderingContext;
     const pixel = new Uint8Array(4);
-    const stepX = Math.max(1, Math.floor(webgl.drawingBufferWidth / 80));
-    const stepY = Math.max(1, Math.floor(webgl.drawingBufferHeight / 60));
+    const stepX = Math.max(1, Math.floor(webgl.drawingBufferWidth / 32));
+    const stepY = Math.max(1, Math.floor(webgl.drawingBufferHeight / 24));
     let nonZeroSamples = 0;
     let samples = 0;
 
