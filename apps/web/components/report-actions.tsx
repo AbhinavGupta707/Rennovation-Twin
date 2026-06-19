@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Loader2, Share2 } from "lucide-react";
+import { Download, Loader2, Printer, Share2 } from "lucide-react";
 import type { ApiResponse } from "@renovation-twin/types";
 
 type ReportExportData = {
@@ -81,6 +81,15 @@ export function ReportActions({ projectId }: { projectId: string }) {
             <Download size={18} aria-hidden="true" />
           )}
           Record report export
+        </button>
+        <button
+          className="button button-secondary"
+          type="button"
+          disabled={busy !== null}
+          onClick={() => window.print()}
+        >
+          <Printer size={18} aria-hidden="true" />
+          Print
         </button>
         <button
           className="button button-primary"

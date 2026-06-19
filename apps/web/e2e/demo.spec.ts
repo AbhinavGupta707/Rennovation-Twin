@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { PlanSchema } from "@renovation-twin/types";
 
 test.describe.configure({ mode: "serial" });
@@ -6,6 +8,9 @@ test.describe.configure({ mode: "serial" });
 const runId = Date.now();
 const editorProjectId = `e2e-editor-${runId}`;
 const uploadProjectId = `e2e-upload-${runId}`;
+const pdfProjectId = `e2e-pdf-${runId}`;
+const pdfFallbackProjectId = `e2e-pdf-fallback-${runId}`;
+const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 const apiPlan: PlanSchema = {
   units: "m",
@@ -136,6 +141,42 @@ async function webglCanvasStats(page: Page) {
   });
 }
 
+function createSamplePdf(): Buffer {
+  const content = [
+    "q",
+    "0.98 0.99 0.98 rg 0 0 612 792 re f",
+    "0.08 0.13 0.11 RG 10 w 80 160 452 0 0 300 -452 0 h S",
+    "8 w 260 160 0 150 160 0 0 -150 S",
+    "8 w 380 160 0 150 S",
+    "0.1 0.41 0.82 RG 4 w 105 130 80 0 S",
+    "Q",
+    "",
+  ].join("\n");
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream\nendobj\n`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += object;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+
+  return Buffer.from(pdf);
+}
+
 test("London flat 3D model renders, orbits, and changes variants on desktop and mobile", async ({
   page,
 }) => {
@@ -263,13 +304,9 @@ test("upload flow accepts a custom floor plan and exposes parser fallback state"
     page.getByRole("heading", { name: "Bring in the floor plan." }),
   ).toBeVisible();
 
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "e2e-floorplan.svg",
-    mimeType: "image/svg+xml",
-    buffer: Buffer.from(
-      '<svg xmlns="http://www.w3.org/2000/svg" width="980" height="700"><rect width="980" height="700" fill="#fbfcfa"/><path d="M80 70H900V620H80Z" fill="none" stroke="#14201c" stroke-width="10"/></svg>',
-    ),
-  });
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles(join(fixtureDir, "parser-floorplan.svg"));
 
   await page.getByRole("button", { name: /^Upload$/ }).click();
   await expect(
@@ -283,10 +320,69 @@ test("upload flow accepts a custom floor plan and exposes parser fallback state"
     page.getByText("Parser proposal ready for review."),
   ).toBeVisible();
   await expect(
-    page.getByText(
-      "Parser found simple wall-like SVG lines. Review scale, rooms, and openings before generating 3D.",
-    ),
+    page.getByText(/Parser found \d+ normalized SVG wall candidates/),
   ).toBeVisible();
+  await expect(page.getByText("Detected walls")).toBeVisible();
+  const detectedWalls = Number(
+    await page
+      .locator('[aria-label="Parse result"] strong')
+      .nth(1)
+      .textContent(),
+  );
+  expect(detectedWalls).toBeGreaterThanOrEqual(6);
+});
+
+test("PDF upload renders the first page in-browser and server fallback remains traceable", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/projects/${pdfProjectId}/upload`);
+
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "e2e-floorplan.pdf",
+    mimeType: "application/pdf",
+    buffer: createSamplePdf(),
+  });
+
+  await page.getByRole("button", { name: /^Upload$/ }).click();
+  await expect(page.getByText(/PDF first page rendered/)).toBeVisible({
+    timeout: 15_000,
+  });
+
+  const previewSrc = await page
+    .locator(".plan-preview img")
+    .first()
+    .getAttribute("src");
+  expect(previewSrc).toMatch(/^data:image\/png;base64,/);
+  expect(previewSrc).not.toContain("PDF preview fallback");
+
+  await page.getByRole("button", { name: /Parse proposal/ }).click();
+  await expect(
+    page.getByText("Fallback parse ready for manual trace."),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/low-confidence bounding-room proposal/),
+  ).toBeVisible();
+
+  const fallbackResponse = await request.post(
+    `/api/projects/${pdfFallbackProjectId}/upload-floorplan`,
+    {
+      multipart: {
+        file: {
+          name: "server-fallback.pdf",
+          mimeType: "application/pdf",
+          buffer: createSamplePdf(),
+        },
+        imageWidth: "980",
+        imageHeight: "700",
+      },
+    },
+  );
+  const fallbackPayload = await fallbackResponse.json();
+  expect(fallbackPayload.ok).toBe(true);
+  expect(fallbackPayload.data.previewKind).toBe("pdf-fallback");
+  expect(fallbackPayload.data.planImageUrl).toContain("data:image/svg+xml");
 });
 
 test("project APIs persist plan, events, and share lookup through the store adapter", async ({
@@ -359,7 +455,9 @@ test("project APIs persist plan, events, and share lookup through the store adap
   const screenshotPayload = await screenshotResponse.json();
   expect(screenshotPayload.ok).toBe(true);
 
-  const reportResponse = await request.post(`/api/projects/${projectId}/report`);
+  const reportResponse = await request.post(
+    `/api/projects/${projectId}/report`,
+  );
   const reportPayload = await reportResponse.json();
   expect(reportPayload.ok).toBe(true);
   expect(reportPayload.data.screenshotId).toBe(
@@ -400,8 +498,19 @@ test("variant, report, share, and proof flows create observable hackathon events
 
   await page.goto("/projects/demo-london-flat/report");
   await expect(page.getByText("Captured 3D view")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Variant comparison" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "What changed" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Variant comparison" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "What changed" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Room-by-room brief" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Warnings and disclaimers" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Print$/ })).toBeVisible();
   await page.getByRole("button", { name: /Record report export/ }).click();
   await expect(page.getByText(/Report export recorded/)).toBeVisible();
   await page.getByRole("button", { name: /Create share view/ }).click();
@@ -413,6 +522,9 @@ test("variant, report, share, and proof flows create observable hackathon events
     page.getByRole("heading", { name: /Sample London flat concept/ }),
   ).toBeVisible();
   await expect(page.getByText("Read-only walkthrough")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Room-by-room brief" }),
+  ).toBeVisible();
 
   await page.goto("/novus-proof");
   await expect(page.getByText("variant_generated").first()).toBeVisible();

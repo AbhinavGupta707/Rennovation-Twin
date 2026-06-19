@@ -35,7 +35,12 @@ export async function POST(
 
   const imageWidth = Number(formData.get("imageWidth")) || 980;
   const imageHeight = Number(formData.get("imageHeight")) || 700;
-  const preview = await fileToPreview(file, imageWidth, imageHeight);
+  const preview = await fileToPreview(
+    file,
+    imageWidth,
+    imageHeight,
+    formData.get("planImageDataUrl"),
+  );
   const project = await attachUpload(projectId, {
     fileName: file.name,
     mimeType: file.type,
@@ -43,6 +48,7 @@ export async function POST(
     planImageUrl: preview.url,
     imageWidth: preview.width,
     imageHeight: preview.height,
+    previewKind: preview.kind,
     createdAt: new Date().toISOString(),
   });
 
@@ -61,14 +67,29 @@ async function fileToPreview(
   file: File,
   imageWidth: number,
   imageHeight: number,
+  renderedPreview: FormDataEntryValue | null,
 ): Promise<{
   url: string;
   width: number;
   height: number;
-  kind: "image" | "pdf-fallback";
+  kind: "image" | "pdf-rendered" | "pdf-fallback";
   warning?: string;
 }> {
   if (file.type === "application/pdf") {
+    if (
+      typeof renderedPreview === "string" &&
+      renderedPreview.startsWith("data:image/png;base64,")
+    ) {
+      return {
+        url: renderedPreview,
+        width: imageWidth,
+        height: imageHeight,
+        kind: "pdf-rendered",
+        warning:
+          "PDF first page rendered in the browser. Parser proposals are still conceptual, so review the trace before generating 3D.",
+      };
+    }
+
     return {
       url: createPdfFallbackPreview(file.name, imageWidth, imageHeight),
       width: imageWidth,
