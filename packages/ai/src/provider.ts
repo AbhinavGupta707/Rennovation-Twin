@@ -25,6 +25,8 @@ export async function runJsonModel<T>({
     body: JSON.stringify({
       model,
       response_format: { type: "json_object" },
+      max_tokens: 2200,
+      temperature: 0.2,
       messages: [
         { role: "system", content: system },
         { role: "user", content: user }
@@ -45,5 +47,13 @@ export async function runJsonModel<T>({
     throw new Error("Fireworks returned an empty response.");
   }
 
-  return schema.parse(JSON.parse(content));
+  let json: unknown;
+
+  try {
+    json = JSON.parse(content);
+  } catch {
+    throw new Error("Fireworks returned malformed JSON.");
+  }
+
+  return schema.parse(json);
 }
