@@ -1,10 +1,36 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, MousePointer2, PencilLine, Ruler, TriangleAlert } from "lucide-react";
-import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from "react-konva";
-import type { Opening, PlanSchema, Vec2, Wall } from "@renovation-twin/types";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Loader2,
+  MousePointer2,
+  PencilLine,
+  Ruler,
+  Save,
+  TriangleAlert,
+} from "lucide-react";
+import {
+  Circle,
+  Group,
+  Image as KonvaImage,
+  Layer,
+  Line,
+  Rect,
+  Stage,
+  Text,
+} from "react-konva";
+import { Events } from "@renovation-twin/events";
+import type {
+  ApiResponse,
+  Opening,
+  PlanSchema,
+  Vec2,
+  Wall,
+} from "@renovation-twin/types";
 
 type EditorMode = "select" | "draw";
 
@@ -29,7 +55,10 @@ function useMeasuredWidth<T extends HTMLElement>() {
     }
 
     const observer = new ResizeObserver(([entry]) => {
-      const nextWidth = Math.max(MIN_STAGE_WIDTH, Math.min(MAX_STAGE_WIDTH, entry.contentRect.width));
+      const nextWidth = Math.max(
+        MIN_STAGE_WIDTH,
+        Math.min(MAX_STAGE_WIDTH, entry.contentRect.width),
+      );
       setWidth(nextWidth);
     });
 
@@ -55,8 +84,11 @@ function usePlanImage(src: string) {
 
 function polygonCenter(points: Vec2[]) {
   return points.reduce(
-    (acc, point) => ({ x: acc.x + point.x / points.length, y: acc.y + point.y / points.length }),
-    { x: 0, y: 0 }
+    (acc, point) => ({
+      x: acc.x + point.x / points.length,
+      y: acc.y + point.y / points.length,
+    }),
+    { x: 0, y: 0 },
   );
 }
 
@@ -75,9 +107,15 @@ function getOpeningSegment(opening: Opening, wall: Wall, pxPerMeter: number) {
   const endOffset = Math.min(length, startOffset + opening.widthM * pxPerMeter);
 
   return {
-    start: { x: wall.start.x + ux * startOffset, y: wall.start.y + uy * startOffset },
+    start: {
+      x: wall.start.x + ux * startOffset,
+      y: wall.start.y + uy * startOffset,
+    },
     end: { x: wall.start.x + ux * endOffset, y: wall.start.y + uy * endOffset },
-    center: { x: wall.start.x + ux * ((startOffset + endOffset) / 2), y: wall.start.y + uy * ((startOffset + endOffset) / 2) }
+    center: {
+      x: wall.start.x + ux * ((startOffset + endOffset) / 2),
+      y: wall.start.y + uy * ((startOffset + endOffset) / 2),
+    },
   };
 }
 
@@ -88,43 +126,134 @@ function newManualWall(start: Vec2, end: Vec2, index: number): EditableWall {
     start,
     end,
     thicknessM: 0.14,
-    heightM: 2.6
+    heightM: 2.6,
   };
 }
 
-export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: string }) {
+export function PlanEditor({
+  plan,
+  projectId,
+}: {
+  plan: PlanSchema;
+  projectId: string;
+}) {
+  const router = useRouter();
   const image = usePlanImage(plan.image.url);
-  const { ref: viewportRef, width: stageWidth } = useMeasuredWidth<HTMLDivElement>();
+  const { ref: viewportRef, width: stageWidth } =
+    useMeasuredWidth<HTMLDivElement>();
+  const manualEditTrackedRef = useRef(false);
   const [walls, setWalls] = useState<EditableWall[]>(
     plan.walls.map((wall) => ({
       ...wall,
-      source: "fixture"
-    }))
+      source: "fixture",
+    })),
   );
   const [mode, setMode] = useState<EditorMode>("select");
   const [selectedWallId, setSelectedWallId] = useState(plan.walls[0]?.id ?? "");
   const [draftStart, setDraftStart] = useState<Vec2 | null>(null);
   const [draftEnd, setDraftEnd] = useState<Vec2 | null>(null);
   const [scalePxPerMeter, setScalePxPerMeter] = useState(plan.scalePxPerMeter);
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [saveMessage, setSaveMessage] = useState(
+    "Plan has not been saved in this session.",
+  );
 
   const scale = stageWidth / plan.image.widthPx;
   const stageHeight = plan.image.heightPx * scale;
   const selectedWall = walls.find((wall) => wall.id === selectedWallId);
-  const manualWallCount = walls.filter((wall) => wall.source === "manual").length;
+  const manualWallCount = walls.filter(
+    (wall) => wall.source === "manual",
+  ).length;
   const hasScale = scalePxPerMeter > 0;
   const hasEnoughWalls = walls.length >= 4;
   const isPlanValid = hasScale && hasEnoughWalls;
-  const wallMap = useMemo(() => new Map(walls.map((wall) => [wall.id, wall])), [walls]);
+  const wallMap = useMemo(
+    () => new Map(walls.map((wall) => [wall.id, wall])),
+    [walls],
+  );
 
   const toPlanPoint = (point: Vec2): Vec2 => ({
     x: Math.round(point.x / scale),
-    y: Math.round(point.y / scale)
+    y: Math.round(point.y / scale),
   });
 
   function setWallPoint(wallId: string, key: "start" | "end", point: Vec2) {
+    trackManualEditOnce();
     setWalls((currentWalls) =>
-      currentWalls.map((wall) => (wall.id === wallId ? { ...wall, [key]: point } : wall))
+      currentWalls.map((wall) =>
+        wall.id === wallId ? { ...wall, [key]: point } : wall,
+      ),
     );
+  }
+
+  function buildCurrentPlan(): PlanSchema {
+    return {
+      ...plan,
+      scalePxPerMeter,
+      walls: walls.map((wall) => ({
+        id: wall.id,
+        start: wall.start,
+        end: wall.end,
+        thicknessM: wall.thicknessM,
+        heightM: wall.heightM,
+        roomIds: wall.roomIds,
+      })),
+    };
+  }
+
+  function trackManualEditOnce() {
+    if (manualEditTrackedRef.current) {
+      return;
+    }
+
+    manualEditTrackedRef.current = true;
+    void fetch("/api/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: Events.ManualEditStarted,
+        projectId,
+        props: { wallCount: walls.length },
+      }),
+    });
+  }
+
+  async function savePlan({ navigate }: { navigate: boolean }) {
+    if (!isPlanValid || saveState === "saving") {
+      return;
+    }
+
+    setSaveState("saving");
+    setSaveMessage("Saving confirmed plan...");
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/plan`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ plan: buildCurrentPlan() }),
+      });
+      const payload = (await response.json()) as ApiResponse<{
+        planVersionId: string;
+      }>;
+
+      if (!payload.ok) {
+        throw new Error(payload.error.message);
+      }
+
+      setSaveState("saved");
+      setSaveMessage(`Saved ${payload.data.planVersionId}.`);
+
+      if (navigate) {
+        router.push(`/projects/${projectId}/model`);
+      }
+    } catch (error) {
+      setSaveState("error");
+      setSaveMessage(
+        error instanceof Error ? error.message : "Could not save the plan.",
+      );
+    }
   }
 
   return (
@@ -132,20 +261,34 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
       <section className="min-w-0 overflow-hidden rounded-lg border border-[rgba(20,32,28,0.14)] bg-white shadow-[0_22px_60px_rgba(42,57,49,0.12)]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#d7dfd7] px-4 py-3">
           <div>
-            <p className="m-0 text-xs font-extrabold uppercase text-[#0f4ea8]">2D plan editor</p>
-            <h1 className="m-0 text-2xl font-black text-[#14201c] md:text-3xl">Confirm the London flat plan.</h1>
+            <p className="m-0 text-xs font-extrabold uppercase text-[#0f4ea8]">
+              2D plan editor
+            </p>
+            <h1 className="m-0 text-2xl font-black text-[#14201c] md:text-3xl">
+              Confirm the London flat plan.
+            </h1>
           </div>
           <Link
             className={`button button-primary ${isPlanValid ? "" : "pointer-events-none opacity-60"}`}
             href={`/projects/${projectId}/model`}
             aria-disabled={!isPlanValid}
+            onClick={(event) => {
+              event.preventDefault();
+              void savePlan({ navigate: true });
+            }}
           >
+            {saveState === "saving" ? (
+              <Loader2 className="spin-icon" size={18} aria-hidden="true" />
+            ) : null}
             Generate 3D <ArrowRight size={18} aria-hidden="true" />
           </Link>
         </div>
 
         <div className="grid gap-4 p-4">
-          <div className="flex flex-wrap items-center gap-2" aria-label="Editor status">
+          <div
+            className="flex flex-wrap items-center gap-2"
+            aria-label="Editor status"
+          >
             <span className="status-pill">
               <CheckCircle2 size={16} aria-hidden="true" />
               Sample fixture loaded
@@ -200,9 +343,17 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
                   return;
                 }
 
-                const length = Math.hypot(draftEnd.x - draftStart.x, draftEnd.y - draftStart.y);
+                const length = Math.hypot(
+                  draftEnd.x - draftStart.x,
+                  draftEnd.y - draftStart.y,
+                );
                 if (length >= 16) {
-                  const wall = newManualWall(draftStart, draftEnd, manualWallCount + 1);
+                  const wall = newManualWall(
+                    draftStart,
+                    draftEnd,
+                    manualWallCount + 1,
+                  );
+                  trackManualEditOnce();
                   setWalls((currentWalls) => [...currentWalls, wall]);
                   setSelectedWallId(wall.id);
                 }
@@ -214,16 +365,28 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
             >
               <Layer>
                 <Group scaleX={scale} scaleY={scale}>
-                  <Rect width={plan.image.widthPx} height={plan.image.heightPx} fill="#fbfcfa" />
+                  <Rect
+                    width={plan.image.widthPx}
+                    height={plan.image.heightPx}
+                    fill="#fbfcfa"
+                  />
                   {image ? (
-                    <KonvaImage image={image} width={plan.image.widthPx} height={plan.image.heightPx} opacity={0.72} />
+                    <KonvaImage
+                      image={image}
+                      width={plan.image.widthPx}
+                      height={plan.image.heightPx}
+                      opacity={0.72}
+                    />
                   ) : null}
                   {plan.rooms.map((room) => {
                     const center = polygonCenter(room.polygon);
                     return (
                       <Group key={room.id}>
                         <Line
-                          points={room.polygon.flatMap((point) => [point.x, point.y])}
+                          points={room.polygon.flatMap((point) => [
+                            point.x,
+                            point.y,
+                          ])}
                           closed
                           fill="rgba(25,103,210,0.045)"
                           stroke="rgba(25,103,210,0.22)"
@@ -258,14 +421,25 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
                     return (
                       <Group key={wall.id}>
                         <Line
-                          points={[wall.start.x, wall.start.y, wall.end.x, wall.end.y]}
+                          points={[
+                            wall.start.x,
+                            wall.start.y,
+                            wall.end.x,
+                            wall.end.y,
+                          ]}
                           stroke={
-                            isSelected ? SELECTED_WALL_STROKE : wall.source === "manual" ? MANUAL_WALL_STROKE : FIXTURE_WALL_STROKE
+                            isSelected
+                              ? SELECTED_WALL_STROKE
+                              : wall.source === "manual"
+                                ? MANUAL_WALL_STROKE
+                                : FIXTURE_WALL_STROKE
                           }
                           strokeWidth={wall.source === "manual" ? 10 : 8}
                           lineCap="round"
                           lineJoin="round"
-                          shadowColor={isSelected ? "rgba(184,119,69,0.35)" : "transparent"}
+                          shadowColor={
+                            isSelected ? "rgba(184,119,69,0.35)" : "transparent"
+                          }
                           shadowBlur={isSelected ? 9 : 0}
                           onClick={() => setSelectedWallId(wall.id)}
                           onTap={() => setSelectedWallId(wall.id)}
@@ -280,7 +454,12 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
                               stroke={SELECTED_WALL_STROKE}
                               strokeWidth={4}
                               draggable
-                              onDragMove={(event) => setWallPoint(wall.id, "start", { x: event.target.x(), y: event.target.y() })}
+                              onDragMove={(event) =>
+                                setWallPoint(wall.id, "start", {
+                                  x: event.target.x(),
+                                  y: event.target.y(),
+                                })
+                              }
                             />
                             <Circle
                               x={wall.end.x}
@@ -290,7 +469,12 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
                               stroke={SELECTED_WALL_STROKE}
                               strokeWidth={4}
                               draggable
-                              onDragMove={(event) => setWallPoint(wall.id, "end", { x: event.target.x(), y: event.target.y() })}
+                              onDragMove={(event) =>
+                                setWallPoint(wall.id, "end", {
+                                  x: event.target.x(),
+                                  y: event.target.y(),
+                                })
+                              }
                             />
                           </>
                         ) : null}
@@ -300,7 +484,9 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
 
                   {plan.openings.map((opening) => {
                     const wall = wallMap.get(opening.wallId);
-                    const segment = wall ? getOpeningSegment(opening, wall, scalePxPerMeter) : null;
+                    const segment = wall
+                      ? getOpeningSegment(opening, wall, scalePxPerMeter)
+                      : null;
                     if (!segment) {
                       return null;
                     }
@@ -308,8 +494,15 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
                     return (
                       <Group key={opening.id}>
                         <Line
-                          points={[segment.start.x, segment.start.y, segment.end.x, segment.end.y]}
-                          stroke={opening.type === "door" ? "#b87745" : "#1967d2"}
+                          points={[
+                            segment.start.x,
+                            segment.start.y,
+                            segment.end.x,
+                            segment.end.y,
+                          ]}
+                          stroke={
+                            opening.type === "door" ? "#b87745" : "#1967d2"
+                          }
                           strokeWidth={14}
                           lineCap="round"
                         />
@@ -330,7 +523,12 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
 
                   {draftStart && draftEnd ? (
                     <Line
-                      points={[draftStart.x, draftStart.y, draftEnd.x, draftEnd.y]}
+                      points={[
+                        draftStart.x,
+                        draftStart.y,
+                        draftEnd.x,
+                        draftEnd.y,
+                      ]}
                       stroke={MANUAL_WALL_STROKE}
                       strokeWidth={9}
                       dash={[12, 8]}
@@ -339,9 +537,22 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
                   ) : null}
 
                   <Group x={80} y={660}>
-                    <Line points={[0, 0, scalePxPerMeter, 0]} stroke="#0f4ea8" strokeWidth={5} lineCap="round" />
-                    <Line points={[0, -10, 0, 10]} stroke="#0f4ea8" strokeWidth={4} />
-                    <Line points={[scalePxPerMeter, -10, scalePxPerMeter, 10]} stroke="#0f4ea8" strokeWidth={4} />
+                    <Line
+                      points={[0, 0, scalePxPerMeter, 0]}
+                      stroke="#0f4ea8"
+                      strokeWidth={5}
+                      lineCap="round"
+                    />
+                    <Line
+                      points={[0, -10, 0, 10]}
+                      stroke="#0f4ea8"
+                      strokeWidth={4}
+                    />
+                    <Line
+                      points={[scalePxPerMeter, -10, scalePxPerMeter, 10]}
+                      stroke="#0f4ea8"
+                      strokeWidth={4}
+                    />
                     <Text
                       x={0}
                       y={14}
@@ -374,6 +585,7 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
               className={`button ${mode === "draw" ? "button-primary" : "button-secondary"}`}
               type="button"
               onClick={() => {
+                trackManualEditOnce();
                 setMode("draw");
                 setDraftStart(null);
                 setDraftEnd(null);
@@ -383,7 +595,8 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
             </button>
           </div>
           <p className="mt-3 text-sm leading-6 text-[#66736e]">
-            Draw mode adds a wall on release. Select mode lets you drag the highlighted wall endpoints.
+            Draw mode adds a wall on release. Select mode lets you drag the
+            highlighted wall endpoints.
           </p>
         </section>
 
@@ -399,11 +612,14 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
               min="10"
               max="220"
               value={scalePxPerMeter}
-              onChange={(event) => setScalePxPerMeter(Number(event.target.value))}
+              onChange={(event) =>
+                setScalePxPerMeter(Number(event.target.value))
+              }
             />
           </label>
           <p className="mt-3 text-sm leading-6 text-[#66736e]">
-            The sample fixture ships with scale confirmed. Changing this value updates opening and reference-line overlays.
+            The sample fixture ships with scale confirmed. Changing this value
+            updates opening and reference-line overlays.
           </p>
         </section>
 
@@ -412,22 +628,47 @@ export function PlanEditor({ plan, projectId }: { plan: PlanSchema; projectId: s
           <dl className="mt-3 grid gap-2 text-sm">
             <div className="flex items-center justify-between gap-3">
               <dt className="text-[#66736e]">Scale state</dt>
-              <dd className="m-0 font-extrabold text-[#2f7d55]">{hasScale ? "Confirmed" : "Missing"}</dd>
+              <dd className="m-0 font-extrabold text-[#2f7d55]">
+                {hasScale ? "Confirmed" : "Missing"}
+              </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-[#66736e]">Minimum walls</dt>
-              <dd className="m-0 font-extrabold text-[#2f7d55]">{hasEnoughWalls ? "Ready" : "Needs 4"}</dd>
+              <dd className="m-0 font-extrabold text-[#2f7d55]">
+                {hasEnoughWalls ? "Ready" : "Needs 4"}
+              </dd>
             </div>
             <div className="flex items-center justify-between gap-3">
               <dt className="text-[#66736e]">Selected wall</dt>
-              <dd className="m-0 max-w-[10rem] truncate font-extrabold">{selectedWall?.id ?? "None"}</dd>
+              <dd className="m-0 max-w-[10rem] truncate font-extrabold">
+                {selectedWall?.id ?? "None"}
+              </dd>
             </div>
           </dl>
           {!isPlanValid ? (
             <p className="mt-3 flex gap-2 rounded-md bg-[rgba(180,35,24,0.08)] p-3 text-sm font-bold text-[#b42318]">
-              <TriangleAlert size={18} aria-hidden="true" /> Add scale and at least four walls before generating.
+              <TriangleAlert size={18} aria-hidden="true" /> Add scale and at
+              least four walls before generating.
             </p>
           ) : null}
+          <button
+            className="button button-secondary mt-4 w-full"
+            type="button"
+            disabled={!isPlanValid || saveState === "saving"}
+            onClick={() => void savePlan({ navigate: false })}
+          >
+            {saveState === "saving" ? (
+              <Loader2 className="spin-icon" size={18} aria-hidden="true" />
+            ) : (
+              <Save size={18} aria-hidden="true" />
+            )}
+            Save confirmed plan
+          </button>
+          <p
+            className={`mt-3 text-sm font-bold ${saveState === "error" ? "text-[#b42318]" : "text-[#66736e]"}`}
+          >
+            {saveMessage}
+          </p>
         </section>
       </aside>
     </div>
