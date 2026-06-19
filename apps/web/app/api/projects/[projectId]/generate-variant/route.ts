@@ -1,7 +1,10 @@
-import { londonFlatVariants } from "@renovation-twin/fixtures";
 import { DesignVariantSchemaZ } from "@renovation-twin/types";
 import { Events, trackEvent } from "@renovation-twin/events";
-import { getFallbackVariant, runJsonModel } from "@renovation-twin/ai";
+import {
+  createFallbackVariantForPlan,
+  runJsonModel,
+  sanitizeVariantForPlan,
+} from "@renovation-twin/ai";
 import {
   getProjectOrDemo,
   saveVariant,
@@ -16,11 +19,24 @@ export async function POST(
   const body = (await request.json().catch(() => ({}))) as {
     prompt?: string;
     stylePreset?: string;
+    budgetLevel?: string;
+    useIntent?: string;
+    householdType?: string;
+    roomPriorities?: unknown;
   };
   const project = getProjectOrDemo(projectId);
   const prompt =
     body.prompt?.trim() || "Create a polished, practical renovation concept.";
   const stylePreset = body.stylePreset?.trim() || "Warm Minimal";
+  const validRoomIds = new Set(project.plan.rooms.map((room) => room.id));
+  const intent = {
+    budgetLevel: normalizeBudgetLevel(body.budgetLevel),
+    useIntent: body.useIntent?.trim() || "flexible living",
+    householdType: body.householdType?.trim() || "mixed household",
+    roomPriorities: normalizeRoomPriorities(body.roomPriorities).filter(
+      (roomId) => validRoomIds.has(roomId),
+    ),
+  };
 
   trackEvent(
     Events.VariantPromptSubmitted,
@@ -28,6 +44,10 @@ export async function POST(
       projectId,
       stylePreset,
       promptLength: prompt.length,
+      budgetLevel: intent.budgetLevel,
+      useIntent: intent.useIntent,
+      householdType: intent.householdType,
+      roomPriorityCount: intent.roomPriorities.length,
     },
     project.id,
   );
@@ -56,29 +76,34 @@ export async function POST(
         },
         prompt,
         stylePreset,
+        intent,
+        requiredOutput:
+          "Return a DesignVariantSchema JSON object with palette, roomNotes, furniture, warnings, rationale, and intent. Furniture roomId values must use only the provided room ids.",
       }),
     });
+    variant = sanitizeVariantForPlan(variant, project.plan, intent);
   } catch (error) {
     provider = "fallback";
     warning =
       error instanceof Error ? error.message : "Fireworks generation failed.";
-    const fallbackVariant = getFallbackVariant(
-      londonFlatVariants,
+    variant = createFallbackVariantForPlan(
+      project.plan,
+      {
+        prompt,
+        stylePreset,
+        intent,
+      },
       project.variants.length,
     );
-    variant = {
-      ...fallbackVariant,
-      name: stylePreset,
-      warnings: [
-        ...fallbackVariant.warnings,
-        "Generated from deterministic fallback because the AI provider is not configured or unavailable.",
-      ],
-    };
   }
 
   saveVariant(project.id, variant, {
     provider,
     usedFallback: provider === "fallback",
+    budgetLevel: intent.budgetLevel,
+    useIntent: intent.useIntent,
+    householdType: intent.householdType,
+    roomPriorityCount: intent.roomPriorities.length,
   });
 
   return jsonOk({
@@ -87,4 +112,16 @@ export async function POST(
     provider,
     warning,
   });
+}
+
+function normalizeBudgetLevel(value: unknown): "lean" | "balanced" | "premium" {
+  return value === "lean" || value === "premium" || value === "balanced"
+    ? value
+    : "balanced";
+}
+
+function normalizeRoomPriorities(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

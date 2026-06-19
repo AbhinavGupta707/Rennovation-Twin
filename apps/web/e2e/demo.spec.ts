@@ -175,6 +175,25 @@ test("London flat 3D model renders, orbits, and changes variants on desktop and 
     const afterVariant = await page.screenshot({ fullPage: true });
 
     expect(byteDiff(beforeVariant, afterVariant)).toBeGreaterThan(1_000);
+
+    if (viewport.width > 500) {
+      const beforeCamera = await page.screenshot({ fullPage: true });
+      await page.getByRole("button", { name: /Living/ }).click();
+      await expect(
+        page.getByRole("button", { name: /Living/ }),
+      ).toHaveAttribute("aria-pressed", "true");
+      await page.waitForTimeout(500);
+      const afterCamera = await page.screenshot({ fullPage: true });
+      expect(byteDiff(beforeCamera, afterCamera)).toBeGreaterThan(1_000);
+
+      await page.getByRole("button", { name: /Guided tour/ }).click();
+      await expect(
+        page.getByRole("button", { name: /Guided tour/ }),
+      ).toHaveAttribute("aria-pressed", "true");
+
+      await page.getByRole("button", { name: /Capture view/ }).click();
+      await expect(page.getByText(/Screenshot saved for report/)).toBeVisible();
+    }
   }
 });
 
@@ -301,6 +320,52 @@ test("project APIs persist plan, events, and share lookup through the store adap
   expect(publicPayload.data.project.id).toBe(projectId);
   expect(publicPayload.data.project.plan.rooms[0].label).toBe("API room");
 
+  const variantResponse = await request.post(
+    `/api/projects/${projectId}/generate-variant`,
+    {
+      data: {
+        prompt: "Make the room a compact work-from-home studio.",
+        stylePreset: "Compact Family",
+        budgetLevel: "premium",
+        useIntent: "work-from-home",
+        householdType: "hybrid worker",
+        roomPriorities: ["api-room", "missing-room"],
+      },
+    },
+  );
+  const variantPayload = await variantResponse.json();
+  expect(variantPayload.ok).toBe(true);
+  expect(variantPayload.data.variant.intent.budgetLevel).toBe("premium");
+  expect(variantPayload.data.variant.intent.roomPriorities).toEqual([
+    "api-room",
+  ]);
+  expect(variantPayload.data.variant.rationale).toContain("premium");
+  expect(
+    variantPayload.data.variant.furniture.every(
+      (item: { roomId: string }) => item.roomId === "api-room",
+    ),
+  ).toBe(true);
+
+  const screenshotResponse = await request.post(
+    `/api/projects/${projectId}/screenshots`,
+    {
+      data: {
+        imageDataUrl: `data:image/png;base64,${Buffer.from("png").toString("base64")}`,
+        variantName: variantPayload.data.variant.name,
+        cameraPreset: "API camera",
+      },
+    },
+  );
+  const screenshotPayload = await screenshotResponse.json();
+  expect(screenshotPayload.ok).toBe(true);
+
+  const reportResponse = await request.post(`/api/projects/${projectId}/report`);
+  const reportPayload = await reportResponse.json();
+  expect(reportPayload.ok).toBe(true);
+  expect(reportPayload.data.screenshotId).toBe(
+    screenshotPayload.data.screenshot.id,
+  );
+
   const eventsResponse = await request.get("/api/events");
   const eventsPayload = await eventsResponse.json();
   expect(eventsPayload.ok).toBe(true);
@@ -318,13 +383,25 @@ test("variant, report, share, and proof flows create observable hackathon events
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/projects/demo-london-flat/design");
 
+  await page.getByRole("button", { name: "Premium" }).click();
+  await page.getByRole("button", { name: "resale uplift" }).click();
+  await page.getByRole("button", { name: "family", exact: true }).click();
   await page.getByRole("button", { name: "Resale Neutral" }).click();
   await page.getByRole("button", { name: /Generate variant/ }).click();
   await expect(
     page.getByRole("heading", { name: "Resale Neutral" }),
   ).toBeVisible();
+  await expect(page.getByText(/Fits a premium budget/)).toBeVisible();
+
+  await page.goto("/projects/demo-london-flat/model?variant=Resale%20Neutral");
+  await page.getByRole("button", { name: /Bedroom \/ office/ }).click();
+  await page.getByRole("button", { name: /Capture view/ }).click();
+  await expect(page.getByText(/Screenshot saved for report/)).toBeVisible();
 
   await page.goto("/projects/demo-london-flat/report");
+  await expect(page.getByText("Captured 3D view")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Variant comparison" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What changed" })).toBeVisible();
   await page.getByRole("button", { name: /Record report export/ }).click();
   await expect(page.getByText(/Report export recorded/)).toBeVisible();
   await page.getByRole("button", { name: /Create share view/ }).click();
@@ -333,8 +410,9 @@ test("variant, report, share, and proof flows create observable hackathon events
   await expect(shareLink).toContainText("/share/");
   await shareLink.click();
   await expect(
-    page.getByRole("heading", { name: "Sample London flat" }),
+    page.getByRole("heading", { name: /Sample London flat concept/ }),
   ).toBeVisible();
+  await expect(page.getByText("Read-only walkthrough")).toBeVisible();
 
   await page.goto("/novus-proof");
   await expect(page.getByText("variant_generated").first()).toBeVisible();

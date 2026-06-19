@@ -2,14 +2,38 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Loader2, Sparkles, TriangleAlert } from "lucide-react";
-import type { ApiResponse, DesignVariantSchema } from "@renovation-twin/types";
+import { ArrowRight, CheckCircle2, Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import type {
+  ApiResponse,
+  DesignVariantSchema,
+  Room,
+} from "@renovation-twin/types";
 
 const presets = [
   "Warm Minimal",
   "Rental Staging",
   "Compact Family",
   "Resale Neutral",
+];
+
+const budgetOptions = [
+  { value: "lean", label: "Lean refresh" },
+  { value: "balanced", label: "Balanced" },
+  { value: "premium", label: "Premium" },
+] as const;
+
+const intentOptions = [
+  "family living",
+  "rental staging",
+  "work-from-home",
+  "resale uplift",
+];
+
+const householdOptions = [
+  "couple",
+  "family",
+  "landlord",
+  "hybrid worker",
 ];
 
 type GenerateVariantData = {
@@ -22,13 +46,23 @@ type GenerateVariantData = {
 export function DesignVariantPanel({
   projectId,
   initialVariants,
+  rooms,
 }: {
   projectId: string;
   initialVariants: DesignVariantSchema[];
+  rooms: Room[];
 }) {
   const [variants, setVariants] = useState(initialVariants);
   const [stylePreset, setStylePreset] = useState(
     initialVariants[0]?.name ?? presets[0]!,
+  );
+  const [budgetLevel, setBudgetLevel] = useState<
+    (typeof budgetOptions)[number]["value"]
+  >("balanced");
+  const [useIntent, setUseIntent] = useState(intentOptions[0]!);
+  const [householdType, setHouseholdType] = useState(householdOptions[0]!);
+  const [roomPriorities, setRoomPriorities] = useState<string[]>(
+    rooms.slice(0, 2).map((room) => room.id),
   );
   const [prompt, setPrompt] = useState(
     "Create a renter-friendly concept that keeps circulation clear, improves storage, and feels premium in listing photos.",
@@ -49,6 +83,10 @@ export function DesignVariantPanel({
         {
           prompt,
           stylePreset,
+          budgetLevel,
+          useIntent,
+          householdType,
+          roomPriorities,
         },
       );
 
@@ -77,9 +115,57 @@ export function DesignVariantPanel({
         <div className="panel-heading">
           <div>
             <p className="eyebrow">AI design variants</p>
-            <h1 className="section-title">Pick and generate a direction.</h1>
+            <h1 className="section-title">Generate an intent-aware direction.</h1>
           </div>
           <span className="status-pill">{provider ?? "ready"}</span>
+        </div>
+
+        <div className="intent-grid">
+          <div>
+            <span className="control-label">Budget level</span>
+            <div className="segmented-control" aria-label="Budget level">
+              {budgetOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={budgetLevel === option.value}
+                  onClick={() => setBudgetLevel(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="control-label">Use intent</span>
+            <div className="segmented-control" aria-label="Use intent">
+              {intentOptions.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={useIntent === option}
+                  onClick={() => setUseIntent(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="control-label">Household</span>
+            <div className="segmented-control" aria-label="Household type">
+              {householdOptions.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={householdType === option}
+                  onClick={() => setHouseholdType(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="segmented-control" aria-label="Style presets">
@@ -94,6 +180,28 @@ export function DesignVariantPanel({
             </button>
           ))}
         </div>
+
+        <fieldset className="priority-fieldset">
+          <legend>Priority rooms</legend>
+          <div className="priority-list">
+            {rooms.map((room) => (
+              <label key={room.id}>
+                <input
+                  type="checkbox"
+                  checked={roomPriorities.includes(room.id)}
+                  onChange={(event) => {
+                    setRoomPriorities((current) =>
+                      event.currentTarget.checked
+                        ? [...current, room.id]
+                        : current.filter((roomId) => roomId !== room.id),
+                    );
+                  }}
+                />
+                <span>{room.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <label className="field-block">
           <span>Variant prompt</span>
@@ -161,6 +269,12 @@ export function DesignVariantPanel({
                 3D
               </Link>
             </div>
+            {variant.rationale ? (
+              <p className="variant-rationale">
+                <CheckCircle2 size={16} aria-hidden="true" />
+                <span>{variant.rationale}</span>
+              </p>
+            ) : null}
             <div className="palette-row" aria-label={`${variant.name} palette`}>
               <span style={{ backgroundColor: variant.palette.wall }} />
               <span style={{ backgroundColor: variant.palette.floor }} />
@@ -175,6 +289,13 @@ export function DesignVariantPanel({
                 </li>
               ))}
             </ul>
+            {variant.warnings.length ? (
+              <ul className="warning-list">
+                {variant.warnings.slice(0, 2).map((warning) => (
+                  <li key={`${variant.name}-${warning}`}>{warning}</li>
+                ))}
+              </ul>
+            ) : null}
           </article>
         ))}
       </section>

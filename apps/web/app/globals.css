@@ -421,8 +421,15 @@ a {
   gap: var(--space-2);
 }
 
+.camera-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .variant-tab,
-.toggle-control {
+.toggle-control,
+.camera-preset {
   min-height: 2.65rem;
   border: 1px solid rgba(20, 32, 28, 0.14);
   border-radius: 0.45rem;
@@ -438,17 +445,51 @@ a {
 }
 
 .variant-tab:hover,
-.variant-tab[aria-pressed="true"] {
+.variant-tab[aria-pressed="true"],
+.camera-preset:hover,
+.camera-preset[aria-pressed="true"] {
   border-color: rgba(25, 103, 210, 0.36);
   background: rgba(25, 103, 210, 0.1);
   color: var(--accent-strong);
 }
 
-.toggle-control {
+.toggle-control,
+.camera-preset {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   padding: 0.56rem 0.75rem;
+}
+
+.camera-preset {
+  cursor: pointer;
+}
+
+.camera-preset:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.capture-preset {
+  border-color: rgba(184, 119, 69, 0.34);
+  color: #7a4b24;
+}
+
+.capture-message {
+  margin: 0;
+  border: 1px solid rgba(47, 125, 85, 0.18);
+  border-radius: 0.45rem;
+  background: rgba(47, 125, 85, 0.08);
+  color: var(--success);
+  padding: 0.72rem 0.85rem;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.capture-error {
+  border-color: rgba(180, 35, 24, 0.2);
+  background: rgba(180, 35, 24, 0.08);
+  color: var(--danger);
 }
 
 .toggle-control input {
@@ -677,6 +718,59 @@ a {
   font-weight: 800;
 }
 
+.control-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.intent-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.priority-fieldset {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.priority-fieldset legend {
+  padding-inline: var(--space-1);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.priority-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.priority-list label {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid rgba(20, 32, 28, 0.14);
+  border-radius: 0.45rem;
+  background: #ffffff;
+  padding: 0.5rem 0.7rem;
+  font-weight: 800;
+}
+
+.priority-list input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+}
+
 .field-block input,
 .field-block textarea {
   width: 100%;
@@ -723,6 +817,20 @@ a {
 .variant-card {
   display: grid;
   gap: var(--space-3);
+}
+
+.variant-rationale {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  border-left: 4px solid var(--success);
+  border-radius: 0.35rem;
+  background: rgba(47, 125, 85, 0.08);
+  color: #235c3d;
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  font-weight: 800;
+  line-height: 1.45;
 }
 
 .icon-link {
@@ -816,6 +924,150 @@ a {
   gap: var(--space-4);
 }
 
+.report-deliverable {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.report-hero,
+.report-visual-grid,
+.comparison-grid,
+.what-changed {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.report-hero {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.report-visual-grid {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+
+.visual-panel,
+.variant-compare,
+.what-changed {
+  border: 1px solid rgba(20, 32, 28, 0.12);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.84);
+  padding: var(--space-4);
+}
+
+.visual-panel-heading,
+.comparison-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.visual-panel-heading h2,
+.comparison-heading h2,
+.variant-compare h3 {
+  margin: 0;
+}
+
+.report-image-frame {
+  display: grid;
+  min-height: 18rem;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: #fbfcfa;
+  margin-top: var(--space-3);
+}
+
+.report-image-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.model-image-frame {
+  position: relative;
+  background: #e9eee7;
+}
+
+.model-image-frame span {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--foreground);
+  padding: 0.45rem 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.screenshot-empty {
+  display: grid;
+  gap: var(--space-1);
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.screenshot-empty strong {
+  color: var(--foreground);
+}
+
+.report-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.report-kpi-grid div {
+  border: 1px solid rgba(20, 32, 28, 0.12);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.78);
+  padding: var(--space-3);
+}
+
+.report-kpi-grid span,
+.change-list span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.report-kpi-grid strong {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: 1.5rem;
+}
+
+.comparison-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.comparison-heading {
+  grid-column: 1 / -1;
+}
+
+.variant-compare {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.change-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.change-list div {
+  display: grid;
+  gap: var(--space-1);
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-2);
+}
+
 .spin-icon {
   animation: spin 900ms linear infinite;
 }
@@ -830,15 +1082,22 @@ a {
   .hero-grid,
   .workflow,
   .workflow-grid,
-  .variant-grid {
+  .variant-grid,
+  .report-visual-grid,
+  .comparison-grid {
     grid-template-columns: 1fr;
   }
 
   .stat-grid,
   .route-grid,
   .card-grid,
-  .funnel-grid {
+  .funnel-grid,
+  .report-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-hero {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -850,7 +1109,8 @@ a {
   .stat-grid,
   .route-grid,
   .card-grid,
-  .funnel-grid {
+  .funnel-grid,
+  .report-kpi-grid {
     grid-template-columns: 1fr;
   }
 
@@ -868,9 +1128,17 @@ a {
   }
 
   .model-header,
-  .model-controls {
+  .model-controls,
+  .camera-controls,
+  .report-hero {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .camera-preset,
+  .variant-tab,
+  .toggle-control {
+    width: 100%;
   }
 
   .model-disclaimer {

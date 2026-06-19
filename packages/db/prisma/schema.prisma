@@ -26,6 +26,7 @@ model Project {
   planVersions    PlanVersion[]
   variants        DesignVariant[]
   reportExports   ReportExport[]
+  screenshots     ScreenshotAsset[]
 }
 
 enum ProjectStatus {
@@ -90,8 +91,26 @@ model EventLog {
 }
 
 model ReportExport {
-  id        String   @id @default(cuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id           String           @id @default(cuid())
+  projectId    String
+  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  screenshotId String?
+  screenshot   ScreenshotAsset? @relation(fields: [screenshotId], references: [id], onDelete: SetNull)
+  createdAt    DateTime         @default(now())
+}
+
+model ScreenshotAsset {
+  id            String         @id @default(cuid())
+  projectId     String
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind          ScreenshotKind
+  imageDataUrl  String
+  variantName   String?
+  cameraPreset  String?
+  createdAt     DateTime       @default(now())
+  reportExports ReportExport[]
+}
+
+enum ScreenshotKind {
+  MODEL_VIEW
 }

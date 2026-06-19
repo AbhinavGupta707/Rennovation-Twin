@@ -24,6 +24,7 @@ export default async function DesignPage({
         <DesignVariantPanel
           projectId={projectId}
           initialVariants={project.variants}
+          rooms={project.plan.rooms}
         />
         <div className="button-row">
           <Link

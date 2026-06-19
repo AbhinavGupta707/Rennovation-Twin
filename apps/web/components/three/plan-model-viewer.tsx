@@ -1,9 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import {
+  type ElementRef,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { Canvas, useThree } from "@react-three/fiber";
 import { Environment, Html, OrbitControls } from "@react-three/drei";
-import type { DesignVariantSchema, FurnitureItem, PlanSchema } from "@renovation-twin/types";
+import { Camera, Pause, Play, ScanSearch } from "lucide-react";
+import type {
+  ApiResponse,
+  DesignVariantSchema,
+  FurnitureItem,
+  PlanSchema,
+} from "@renovation-twin/types";
 import { planToSceneSpec } from "@renovation-twin/geometry";
 
 const baseVariant: DesignVariantSchema = {
@@ -21,27 +33,102 @@ const baseVariant: DesignVariantSchema = {
 };
 
 type ViewerProps = {
+  projectId?: string;
   plan: PlanSchema;
   variants: DesignVariantSchema[];
   initialVariantName?: string;
+  readOnly?: boolean;
 };
 
-export function PlanModelViewer({ plan, variants, initialVariantName }: ViewerProps) {
+type CameraPreset = {
+  id: "overview" | "living" | "bedroom" | "walkthrough";
+  label: string;
+  description: string;
+  position: [number, number, number];
+  target: [number, number, number];
+};
+
+export function PlanModelViewer({
+  projectId,
+  plan,
+  variants,
+  initialVariantName,
+  readOnly = false,
+}: ViewerProps) {
   const scene = useMemo(() => planToSceneSpec(plan), [plan]);
   const allVariants = useMemo(() => [baseVariant, ...variants], [variants]);
   const defaultVariantName =
     allVariants.find((variant) => variant.name === initialVariantName)?.name ?? allVariants[1]?.name ?? allVariants[0]!.name;
   const [activeVariantName, setActiveVariantName] = useState(defaultVariantName);
+  const cameraPresets = useMemo(() => createCameraPresets(scene), [scene]);
+  const [activeCameraPresetId, setActiveCameraPresetId] =
+    useState<CameraPreset["id"]>("overview");
+  const [guidedMode, setGuidedMode] = useState(false);
   const [showRoomLabels, setShowRoomLabels] = useState(false);
+  const [captureState, setCaptureState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [captureMessage, setCaptureMessage] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeVariant = allVariants.find((variant) => variant.name === activeVariantName) ?? allVariants[0]!;
   const furniture =
     activeVariant.furniture.length > 0 ? activeVariant.furniture : createBaseFurniture(plan, activeVariant);
-  const cameraPosition: [number, number, number] = [
-    scene.bounds.widthM / 2,
-    Math.max(scene.bounds.widthM, scene.bounds.depthM) * 0.72,
-    scene.bounds.depthM * 1.25
-  ];
-  const target: [number, number, number] = [scene.bounds.widthM / 2, 0, scene.bounds.depthM / 2];
+  const activeCameraPreset =
+    cameraPresets.find((preset) => preset.id === activeCameraPresetId) ??
+    cameraPresets[0]!;
+
+  useEffect(() => {
+    if (!guidedMode) {
+      return;
+    }
+
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    if (prefersReducedMotion) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setActiveCameraPresetId((current) => {
+        const currentIndex = cameraPresets.findIndex(
+          (preset) => preset.id === current,
+        );
+        return cameraPresets[(currentIndex + 1) % cameraPresets.length]!.id;
+      });
+    }, 2600);
+
+    return () => window.clearInterval(timer);
+  }, [cameraPresets, guidedMode]);
+
+  async function captureScreenshot() {
+    if (!projectId || readOnly || !canvasRef.current) {
+      return;
+    }
+
+    setCaptureState("saving");
+    setCaptureMessage("Capturing the current 3D view...");
+
+    try {
+      const imageDataUrl = canvasRef.current.toDataURL("image/png");
+      const payload = await postJson<{
+        screenshot: { id: string; createdAt: string };
+      }>(`/api/projects/${projectId}/screenshots`, {
+        imageDataUrl,
+        variantName: activeVariant.name,
+        cameraPreset: activeCameraPreset.label,
+      });
+
+      setCaptureState("saved");
+      setCaptureMessage(`Screenshot saved for report (${payload.screenshot.id}).`);
+    } catch (error) {
+      setCaptureState("error");
+      setCaptureMessage(
+        error instanceof Error ? error.message : "Could not capture screenshot.",
+      );
+    }
+  }
 
   return (
     <div className="model-viewer">
@@ -72,14 +159,70 @@ export function PlanModelViewer({ plan, variants, initialVariantName }: ViewerPr
         </label>
       </div>
 
+      <div className="camera-controls" aria-label="Camera presets">
+        {cameraPresets.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            className="camera-preset"
+            aria-pressed={preset.id === activeCameraPreset.id}
+            title={preset.description}
+            onClick={() => {
+              setGuidedMode(false);
+              setActiveCameraPresetId(preset.id);
+            }}
+          >
+            <ScanSearch size={16} aria-hidden="true" />
+            {preset.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="camera-preset"
+          aria-pressed={guidedMode}
+          onClick={() => setGuidedMode((current) => !current)}
+        >
+          {guidedMode ? (
+            <Pause size={16} aria-hidden="true" />
+          ) : (
+            <Play size={16} aria-hidden="true" />
+          )}
+          Guided tour
+        </button>
+        {!readOnly && projectId ? (
+          <button
+            type="button"
+            className="camera-preset capture-preset"
+            disabled={captureState === "saving"}
+            onClick={captureScreenshot}
+          >
+            <Camera size={16} aria-hidden="true" />
+            Capture view
+          </button>
+        ) : null}
+      </div>
+
+      {captureMessage ? (
+        <p
+          className={`capture-message ${captureState === "error" ? "capture-error" : ""}`}
+        >
+          {captureMessage}
+        </p>
+      ) : null}
+
       <div className="model-canvas-shell">
         <Canvas
           shadows
-          camera={{ position: cameraPosition, fov: 42, near: 0.1, far: 100 }}
+          camera={{ position: activeCameraPreset.position, fov: 42, near: 0.1, far: 100 }}
           dpr={[1, 1.75]}
           gl={{ preserveDrawingBuffer: true }}
-          onCreated={({ camera }) => {
-            camera.lookAt(target[0], target[1], target[2]);
+          onCreated={({ camera, gl }) => {
+            canvasRef.current = gl.domElement;
+            camera.lookAt(
+              activeCameraPreset.target[0],
+              activeCameraPreset.target[1],
+              activeCameraPreset.target[2],
+            );
           }}
           aria-label="Interactive 3D renovation model"
         >
@@ -97,15 +240,7 @@ export function PlanModelViewer({ plan, variants, initialVariantName }: ViewerPr
             furniture={furniture}
             showRoomLabels={showRoomLabels}
           />
-          <OrbitControls
-            makeDefault
-            enableDamping
-            dampingFactor={0.08}
-            minDistance={4}
-            maxDistance={28}
-            maxPolarAngle={Math.PI / 2.12}
-            target={target}
-          />
+          <CameraControlsRig preset={activeCameraPreset} />
           <Environment preset="apartment" />
         </Canvas>
       </div>
@@ -114,8 +249,33 @@ export function PlanModelViewer({ plan, variants, initialVariantName }: ViewerPr
         <span>{plan.walls.length} walls</span>
         <span>{plan.openings.length} openings</span>
         <span>{furniture.length} furniture pieces</span>
+        <span>{activeCameraPreset.label} camera</span>
       </div>
     </div>
+  );
+}
+
+function CameraControlsRig({ preset }: { preset: CameraPreset }) {
+  const controlsRef = useRef<ElementRef<typeof OrbitControls> | null>(null);
+  const { camera } = useThree();
+
+  useEffect(() => {
+    camera.position.set(...preset.position);
+    camera.lookAt(...preset.target);
+    controlsRef.current?.target.set(...preset.target);
+    controlsRef.current?.update();
+  }, [camera, preset]);
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      enableDamping
+      dampingFactor={0.08}
+      minDistance={2.2}
+      maxDistance={30}
+      maxPolarAngle={Math.PI / 2.08}
+    />
   );
 }
 
@@ -287,6 +447,68 @@ function TableLeg({ x, z, height, color }: { x: number; z: number; height: numbe
   return <Box size={[0.06, height, 0.06]} position={[x, 0, z]} color={color} />;
 }
 
+function createCameraPresets(
+  scene: ReturnType<typeof planToSceneSpec>,
+): CameraPreset[] {
+  const width = Math.max(scene.bounds.widthM, 3);
+  const depth = Math.max(scene.bounds.depthM, 3);
+  const center: [number, number, number] = [width / 2, 0.2, depth / 2];
+  const living = findRoomTarget(scene, /living|dining|kitchen/i, center);
+  const bedroom = findRoomTarget(scene, /bed|office|guest/i, center);
+
+  return [
+    {
+      id: "overview",
+      label: "Overview",
+      description: "Top-down camera for reading the whole floor plan.",
+      position: [width / 2, Math.max(width, depth) * 0.78, depth * 1.18],
+      target: center,
+    },
+    {
+      id: "living",
+      label: "Living",
+      description: "Lower camera aimed at the living and dining zone.",
+      position: [
+        Math.min(width - 0.8, living[0] + 2.2),
+        2.2,
+        Math.min(depth - 0.8, living[2] + 2.4),
+      ],
+      target: living,
+    },
+    {
+      id: "bedroom",
+      label: "Bedroom / office",
+      description: "Camera aimed at the sleep, work, or guest zone.",
+      position: [
+        Math.max(0.8, bedroom[0] - 2.4),
+        2.05,
+        Math.min(depth - 0.6, bedroom[2] + 1.8),
+      ],
+      target: bedroom,
+    },
+    {
+      id: "walkthrough",
+      label: "Walkthrough",
+      description: "Eye-level guided camera from the plan entrance.",
+      position: [Math.max(0.9, width * 0.18), 1.55, Math.max(0.9, depth * 0.86)],
+      target: [width * 0.58, 1.2, depth * 0.48],
+    },
+  ];
+}
+
+function findRoomTarget(
+  scene: ReturnType<typeof planToSceneSpec>,
+  pattern: RegExp,
+  fallback: [number, number, number],
+): [number, number, number] {
+  const room = scene.roomLabels.find((label) => pattern.test(label.label));
+  if (!room) {
+    return fallback;
+  }
+
+  return [room.position[0], 1.1, room.position[2]];
+}
+
 function createBaseFurniture(plan: PlanSchema, variant: DesignVariantSchema): FurnitureItem[] {
   return plan.rooms.slice(0, 5).map((room, index) => {
     const center = room.polygon.reduce(
@@ -326,4 +548,19 @@ function updateVariantUrl(variantName: string): void {
 
   url.searchParams.set("variant", variantName);
   window.history.replaceState(null, "", url);
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = (await response.json()) as ApiResponse<T>;
+
+  if (!payload.ok) {
+    throw new Error(payload.error.message);
+  }
+
+  return payload.data;
 }

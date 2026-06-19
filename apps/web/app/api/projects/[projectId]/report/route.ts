@@ -7,10 +7,11 @@ export async function POST(
 ) {
   const { projectId } = await context.params;
   const project = markReportExported(projectId);
-  const exportedAt = new Date().toISOString();
+  const report = project.reportExports[0];
 
   return jsonOk({
-    reportId: `${project.id}-${Date.now()}`,
-    exportedAt,
+    reportId: report?.id ?? `${project.id}-report`,
+    exportedAt: report?.createdAt ?? new Date().toISOString(),
+    screenshotId: report?.screenshotId,
   });
 }

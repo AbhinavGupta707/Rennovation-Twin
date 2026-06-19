@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { BadgeInfo } from "lucide-react";
-import { PlanSummary } from "../../components/plan-summary";
+import { ReportDeliverable } from "../../../components/report-deliverable";
 import { PlanModelViewer } from "../../../components/three/plan-model-viewer";
 import { getProjectByShareToken } from "../../../lib/server/project-store";
 
@@ -21,34 +21,25 @@ export default async function PublicSharePage({
   return (
     <section className="page-band">
       <div className="container public-report">
-        <div className="model-header">
-          <div>
-            <p className="eyebrow">Shared concept report</p>
-            <h1 className="model-title">{project.title}</h1>
-          </div>
-          <div className="model-disclaimer">
-            <BadgeInfo size={16} aria-hidden="true" />
-            Concept visualisation only
-          </div>
-        </div>
-
-        <PlanSummary plan={project.plan} />
+        <ReportDeliverable project={project} publicView />
 
         <div className="stage-body model-stage-body">
-          <PlanModelViewer plan={project.plan} variants={project.variants} />
+          <div className="model-header">
+            <div>
+              <p className="eyebrow">Read-only walkthrough</p>
+              <h2 className="model-title">Explore the shared model.</h2>
+            </div>
+            <div className="model-disclaimer">
+              <BadgeInfo size={16} aria-hidden="true" />
+              Public view
+            </div>
+          </div>
+          <PlanModelViewer
+            plan={project.plan}
+            variants={project.variants}
+            readOnly
+          />
         </div>
-
-        <section className="card-grid" aria-label="Variant report">
-          {project.variants.map((variant) => (
-            <article className="card" key={variant.name}>
-              <h2>{variant.name}</h2>
-              <p>{variant.style}</p>
-              {variant.roomNotes[0] ? (
-                <p>{variant.roomNotes[0].summary}</p>
-              ) : null}
-            </article>
-          ))}
-        </section>
       </div>
     </section>
   );

@@ -36,6 +36,16 @@ export type PlanVersionRecord = {
 export type ReportExportRecord = {
   id: string;
   createdAt: string;
+  screenshotId?: string;
+};
+
+export type ProjectScreenshotRecord = {
+  id: string;
+  kind: "MODEL_VIEW";
+  imageDataUrl: string;
+  variantName?: string;
+  cameraPreset?: string;
+  createdAt: string;
 };
 
 export type ProjectStatus =
@@ -59,6 +69,7 @@ export type ProjectRecord = {
   variants: DesignVariantSchema[];
   planVersions: PlanVersionRecord[];
   reportExports: ReportExportRecord[];
+  screenshots: ProjectScreenshotRecord[];
   shareToken?: string;
 };
 
@@ -184,6 +195,7 @@ function normalizeProject(project: ProjectRecord): ProjectRecord {
       },
     ],
     reportExports: project.reportExports ?? [],
+    screenshots: project.screenshots ?? [],
   };
 }
 
@@ -214,6 +226,7 @@ function seedDemoProject(store: RuntimeStore) {
       },
     ],
     reportExports: [],
+    screenshots: [],
   });
 }
 
@@ -270,6 +283,7 @@ export function createProject({
     variants: [],
     planVersions: [],
     reportExports: [],
+    screenshots: [],
   };
 
   store.projects.set(project.id, project);
@@ -454,8 +468,10 @@ export function markWalkthroughStarted(projectId: string): ProjectRecord {
 export function markReportExported(projectId: string): ProjectRecord {
   const store = getStore();
   const project = ensureProject(projectId);
+  const latestScreenshot = project.screenshots[0];
   project.reportExports.unshift({
     id: `${project.id}-report-${Date.now()}`,
+    screenshotId: latestScreenshot?.id,
     createdAt: new Date().toISOString(),
   });
   recordEvent(
@@ -465,6 +481,24 @@ export function markReportExported(projectId: string): ProjectRecord {
   );
   persistStore(store);
   return project;
+}
+
+export function saveProjectScreenshot(
+  projectId: string,
+  screenshot: Omit<ProjectScreenshotRecord, "id" | "createdAt">,
+): ProjectScreenshotRecord {
+  const store = getStore();
+  const project = ensureProject(projectId);
+  const record: ProjectScreenshotRecord = {
+    ...screenshot,
+    id: `${project.id}-screenshot-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+  };
+
+  project.screenshots = [record, ...project.screenshots].slice(0, 6);
+  project.updatedAt = record.createdAt;
+  persistStore(store);
+  return record;
 }
 
 export function createShare(projectId: string): {
@@ -520,6 +554,7 @@ function ensureProject(projectId: string): ProjectRecord {
     variants: [],
     planVersions: [],
     reportExports: [],
+    screenshots: [],
   };
 
   store.projects.set(projectId, fallback);

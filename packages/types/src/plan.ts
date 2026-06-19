@@ -63,6 +63,13 @@ export const FurnitureItemSchema = z.object({
   color: z.string().optional()
 });
 
+export const DesignVariantIntentSchema = z.object({
+  budgetLevel: z.enum(["lean", "balanced", "premium"]).optional(),
+  useIntent: z.string().optional(),
+  householdType: z.string().optional(),
+  roomPriorities: z.array(z.string()).optional()
+});
+
 export const DesignVariantSchemaZ = z.object({
   name: z.string(),
   style: z.string(),
@@ -80,7 +87,10 @@ export const DesignVariantSchemaZ = z.object({
     })
   ),
   furniture: z.array(FurnitureItemSchema),
-  warnings: z.array(z.string())
+  warnings: z.array(z.string()),
+  rationale: z.string().optional(),
+  intent: DesignVariantIntentSchema.optional(),
+  screenshotUrl: z.string().optional()
 });
 
 export type Vec2 = z.infer<typeof Vec2Schema>;
@@ -89,4 +99,5 @@ export type Opening = z.infer<typeof OpeningSchema>;
 export type Room = z.infer<typeof RoomSchema>;
 export type PlanSchema = z.infer<typeof PlanSchemaZ>;
 export type FurnitureItem = z.infer<typeof FurnitureItemSchema>;
+export type DesignVariantIntent = z.infer<typeof DesignVariantIntentSchema>;
 export type DesignVariantSchema = z.infer<typeof DesignVariantSchemaZ>;

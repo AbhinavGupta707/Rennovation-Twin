@@ -41,6 +41,7 @@ export default async function ModelPage({
           </div>
         </div>
         <PlanModelViewer
+          projectId={projectId}
           plan={project.plan}
           variants={project.variants}
           initialVariantName={variant}
