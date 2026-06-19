@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { getPrismaClient } from "@renovation-twin/db";
 import { londonFlatPlan, londonFlatVariants } from "@renovation-twin/fixtures";
 import {
   Events,
@@ -86,33 +87,41 @@ type RuntimeStore = {
 };
 
 type ProjectStoreAdapter = {
-  mode: "json-file";
-  read(): RuntimeStore;
-  write(store: RuntimeStore): void;
+  mode: "json-file" | "prisma";
+  read(): Promise<RuntimeStore>;
+  write(store: RuntimeStore): Promise<void>;
 };
 
 const globalStore = globalThis as unknown as {
-  renovationTwinStore?: RuntimeStore;
+  renovationTwinStorePromise?: Promise<RuntimeStore>;
   renovationTwinStoreAdapter?: ProjectStoreAdapter;
 };
 
-function getStore(): RuntimeStore {
-  if (!globalStore.renovationTwinStore) {
-    globalStore.renovationTwinStore = getAdapter().read();
+async function getStore(): Promise<RuntimeStore> {
+  if (!globalStore.renovationTwinStorePromise) {
+    globalStore.renovationTwinStorePromise = getAdapter().read();
   }
 
-  seedDemoProject(globalStore.renovationTwinStore);
-  return globalStore.renovationTwinStore;
+  const store = await globalStore.renovationTwinStorePromise;
+  seedDemoProject(store);
+  return store;
 }
 
 function getAdapter(): ProjectStoreAdapter {
   if (!globalStore.renovationTwinStoreAdapter) {
-    globalStore.renovationTwinStoreAdapter = new JsonFileProjectStoreAdapter(
-      getStoreFilePath(),
-    );
+    globalStore.renovationTwinStoreAdapter = shouldUsePrismaStore()
+      ? new PrismaProjectStoreAdapter()
+      : new JsonFileProjectStoreAdapter(getStoreFilePath());
   }
 
   return globalStore.renovationTwinStoreAdapter;
+}
+
+function shouldUsePrismaStore() {
+  return (
+    Boolean(process.env.DATABASE_URL) &&
+    process.env.RENOVATION_TWIN_STORE_ADAPTER !== "json-file"
+  );
 }
 
 function getStoreFilePath() {
@@ -122,8 +131,9 @@ function getStoreFilePath() {
   );
 }
 
-function persistStore(store = getStore()) {
-  getAdapter().write(store);
+async function persistStore(store?: RuntimeStore) {
+  const nextStore = store ?? (await getStore());
+  await getAdapter().write(nextStore);
 }
 
 class JsonFileProjectStoreAdapter implements ProjectStoreAdapter {
@@ -131,7 +141,7 @@ class JsonFileProjectStoreAdapter implements ProjectStoreAdapter {
 
   constructor(private readonly filePath: string) {}
 
-  read(): RuntimeStore {
+  async read(): Promise<RuntimeStore> {
     try {
       const payload = JSON.parse(
         readFileSync(this.filePath, "utf8"),
@@ -142,7 +152,7 @@ class JsonFileProjectStoreAdapter implements ProjectStoreAdapter {
     }
   }
 
-  write(store: RuntimeStore) {
+  async write(store: RuntimeStore) {
     const payload: StoreShape = {
       projects: [...store.projects.values()],
       shareTokens: Object.fromEntries(store.shareTokens),
@@ -154,6 +164,129 @@ class JsonFileProjectStoreAdapter implements ProjectStoreAdapter {
     writeFileSync(tempPath, JSON.stringify(payload, null, 2));
     renameSync(tempPath, this.filePath);
   }
+}
+
+type PrismaProjectRow = {
+  id: string;
+  shareToken: string | null;
+  stateJson: unknown;
+};
+
+type PrismaEventRow = {
+  name: string;
+  projectId: string | null;
+  props: unknown;
+  createdAt: Date;
+};
+
+type PrismaStoreClient = {
+  project: {
+    findMany(args: unknown): Promise<PrismaProjectRow[]>;
+    upsert(args: unknown): Promise<unknown>;
+  };
+  eventLog: {
+    findMany(args: unknown): Promise<PrismaEventRow[]>;
+    deleteMany(args?: unknown): Promise<unknown>;
+    createMany(args: unknown): Promise<unknown>;
+  };
+  $transaction<T>(fn: (client: PrismaStoreClient) => Promise<T>): Promise<T>;
+};
+
+class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
+  mode = "prisma" as const;
+
+  async read(): Promise<RuntimeStore> {
+    const client = await getPrismaStoreClient();
+    const [projectRows, eventRows] = await Promise.all([
+      client.project.findMany({
+        select: { id: true, shareToken: true, stateJson: true },
+      }),
+      client.eventLog.findMany({
+        orderBy: { createdAt: "asc" },
+        select: { name: true, projectId: true, props: true, createdAt: true },
+      }),
+    ]);
+
+    return normalizeRuntimeStore({
+      projects: projectRows
+        .map((row) => row.stateJson)
+        .filter(isProjectRecord),
+      shareTokens: Object.fromEntries(
+        projectRows.flatMap((row) =>
+          row.shareToken ? [[row.shareToken, row.id]] : [],
+        ),
+      ),
+      events: eventRows.map((row) => ({
+        name: row.name as EventName,
+        projectId: row.projectId ?? undefined,
+        props: isEventProps(row.props) ? row.props : undefined,
+        createdAt: row.createdAt.toISOString(),
+      })),
+    });
+  }
+
+  async write(store: RuntimeStore) {
+    const client = await getPrismaStoreClient();
+    const projects = [...store.projects.values()];
+
+    await client.$transaction(async (transaction) => {
+      for (const project of projects) {
+        await transaction.project.upsert({
+          where: { id: project.id },
+          update: toPrismaProjectUpdate(project),
+          create: {
+            id: project.id,
+            createdAt: new Date(project.createdAt),
+            ...toPrismaProjectUpdate(project),
+          },
+        });
+      }
+
+      await transaction.eventLog.deleteMany();
+
+      if (store.events.length) {
+        await transaction.eventLog.createMany({
+          data: store.events.map((event) => ({
+            name: event.name,
+            projectId: event.projectId,
+            props: event.props ?? {},
+            createdAt: new Date(event.createdAt),
+          })),
+        });
+      }
+    });
+  }
+}
+
+async function getPrismaStoreClient(): Promise<PrismaStoreClient> {
+  return (await getPrismaClient()) as unknown as PrismaStoreClient;
+}
+
+function toPrismaProjectUpdate(project: ProjectRecord) {
+  return {
+    title: project.title,
+    status: project.status,
+    postcode: project.postcode,
+    planImageUrl: project.plan.image.url,
+    scalePxPerMeter: project.plan.scalePxPerMeter,
+    currentPlanId: project.planVersions.at(-1)?.id,
+    shareToken: project.shareToken,
+    stateJson: project,
+  };
+}
+
+function isProjectRecord(value: unknown): value is ProjectRecord {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "plan" in value &&
+    "variants" in value
+  );
+}
+
+function isEventProps(value: unknown): value is EventProps {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeRuntimeStore(payload: Partial<StoreShape>): RuntimeStore {
@@ -238,38 +371,44 @@ export function getProjectStoreMode() {
   };
 }
 
-export function listEvents(): TrackedEvent[] {
-  return [...getStore().events];
+export async function listEvents(): Promise<TrackedEvent[]> {
+  return [...(await getStore()).events];
 }
 
-export function recordEvent(
+export async function recordEvent(
   name: EventName,
   props?: EventProps,
   projectId?: string,
-): TrackedEvent {
-  const store = getStore();
+): Promise<TrackedEvent> {
+  const store = await getStore();
   const event = trackEvent(name, props, projectId);
   store.events.push(event);
-  persistStore(store);
+  await persistStore(store);
   return event;
 }
 
-export function getProject(projectId: string): ProjectRecord | undefined {
-  return getStore().projects.get(projectId);
+export async function getProject(
+  projectId: string,
+): Promise<ProjectRecord | undefined> {
+  return (await getStore()).projects.get(projectId);
 }
 
-export function getProjectOrDemo(projectId: string): ProjectRecord {
-  return getProject(projectId) ?? getProject("demo-london-flat")!;
+export async function getProjectOrDemo(
+  projectId: string,
+): Promise<ProjectRecord> {
+  return (
+    (await getProject(projectId)) ?? (await getProject("demo-london-flat"))!
+  );
 }
 
-export function createProject({
+export async function createProject({
   title,
   postcode,
 }: {
   title?: string;
   postcode?: string;
-}): ProjectRecord {
-  const store = getStore();
+}): Promise<ProjectRecord> {
+  const store = await getStore();
   const createdAt = new Date().toISOString();
   const project: ProjectRecord = {
     id: `project-${crypto.randomUUID()}`,
@@ -287,21 +426,21 @@ export function createProject({
   };
 
   store.projects.set(project.id, project);
-  recordEvent(
+  await recordEvent(
     Events.ProjectCreated,
     { hasPostcode: Boolean(project.postcode) },
     project.id,
   );
-  persistStore(store);
+  await persistStore(store);
   return project;
 }
 
-export function attachUpload(
+export async function attachUpload(
   projectId: string,
   upload: UploadRecord,
-): ProjectRecord {
-  const store = getStore();
-  const project = ensureProject(projectId);
+): Promise<ProjectRecord> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
   const nextPlan = createManualFallbackPlan(upload);
 
   project.uploads.unshift(upload);
@@ -312,7 +451,7 @@ export function attachUpload(
     createPlanVersion(project, nextPlan, "MANUAL_EDIT"),
   );
 
-  recordEvent(
+  await recordEvent(
     Events.FloorplanUploaded,
     {
       projectId,
@@ -325,27 +464,27 @@ export function attachUpload(
   );
 
   if (upload.mimeType === "application/pdf") {
-    recordEvent(
+    await recordEvent(
       Events.PdfRendered,
       { projectId, rendered: false, fallback: true },
       project.id,
     );
   }
 
-  persistStore(store);
+  await persistStore(store);
   return project;
 }
 
-export function parsePlan(projectId: string): {
+export async function parsePlan(projectId: string): Promise<{
   planProposal: PlanSchema;
   confidence: number;
   warnings: string[];
-} {
-  const store = getStore();
-  const project = ensureProject(projectId);
+}> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
   const isDemo = project.id === "demo-london-flat";
 
-  recordEvent(Events.PlanParseStarted, { projectId }, project.id);
+  await recordEvent(Events.PlanParseStarted, { projectId }, project.id);
 
   const response = isDemo
     ? createDemoParseResponse(project.plan)
@@ -363,7 +502,7 @@ export function parsePlan(projectId: string): {
     ),
   );
 
-  recordEvent(
+  await recordEvent(
     Events.PlanParseCompleted,
     {
       projectId,
@@ -375,25 +514,28 @@ export function parsePlan(projectId: string): {
     project.id,
   );
 
-  persistStore(store);
+  await persistStore(store);
   return response;
 }
 
-export function savePlan(projectId: string, plan: PlanSchema): ProjectRecord {
-  const store = getStore();
-  const project = ensureProject(projectId);
+export async function savePlan(
+  projectId: string,
+  plan: PlanSchema,
+): Promise<ProjectRecord> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
 
   project.plan = plan;
   project.status = "PLAN_CONFIRMED";
   project.updatedAt = new Date().toISOString();
   project.planVersions.push(createPlanVersion(project, plan, "MANUAL_EDIT"));
 
-  recordEvent(
+  await recordEvent(
     Events.ScaleConfirmed,
     { projectId, scalePxPerMeter: plan.scalePxPerMeter },
     project.id,
   );
-  recordEvent(
+  await recordEvent(
     Events.PlanConfirmed,
     {
       projectId,
@@ -404,17 +546,17 @@ export function savePlan(projectId: string, plan: PlanSchema): ProjectRecord {
     project.id,
   );
 
-  persistStore(store);
+  await persistStore(store);
   return project;
 }
 
-export function saveVariant(
+export async function saveVariant(
   projectId: string,
   variant: DesignVariantSchema,
   props?: Record<string, string | number | boolean | null | undefined>,
-): ProjectRecord {
-  const store = getStore();
-  const project = ensureProject(projectId);
+): Promise<ProjectRecord> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
 
   project.variants = [
     variant,
@@ -423,18 +565,20 @@ export function saveVariant(
   project.status = "VARIANTS_GENERATED";
   project.updatedAt = new Date().toISOString();
 
-  recordEvent(
+  await recordEvent(
     Events.VariantGenerated,
     { projectId, style: variant.style, ...props },
     project.id,
   );
-  persistStore(store);
+  await persistStore(store);
   return project;
 }
 
-export function markModelGenerated(projectId: string): ProjectRecord {
-  const store = getStore();
-  const project = ensureProject(projectId);
+export async function markModelGenerated(
+  projectId: string,
+): Promise<ProjectRecord> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
 
   if (
     project.status === "PLAN_CONFIRMED" ||
@@ -445,7 +589,7 @@ export function markModelGenerated(projectId: string): ProjectRecord {
     project.updatedAt = new Date().toISOString();
   }
 
-  recordEvent(
+  await recordEvent(
     Events.ModelGenerated,
     {
       projectId,
@@ -455,40 +599,44 @@ export function markModelGenerated(projectId: string): ProjectRecord {
     project.id,
   );
 
-  persistStore(store);
+  await persistStore(store);
   return project;
 }
 
-export function markWalkthroughStarted(projectId: string): ProjectRecord {
-  const project = ensureProject(projectId);
-  recordEvent(Events.WalkthroughStarted, { projectId }, project.id);
+export async function markWalkthroughStarted(
+  projectId: string,
+): Promise<ProjectRecord> {
+  const project = await ensureProject(projectId);
+  await recordEvent(Events.WalkthroughStarted, { projectId }, project.id);
   return project;
 }
 
-export function markReportExported(projectId: string): ProjectRecord {
-  const store = getStore();
-  const project = ensureProject(projectId);
+export async function markReportExported(
+  projectId: string,
+): Promise<ProjectRecord> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
   const latestScreenshot = project.screenshots[0];
   project.reportExports.unshift({
     id: `${project.id}-report-${Date.now()}`,
     screenshotId: latestScreenshot?.id,
     createdAt: new Date().toISOString(),
   });
-  recordEvent(
+  await recordEvent(
     Events.ReportExported,
     { projectId, variantCount: project.variants.length },
     project.id,
   );
-  persistStore(store);
+  await persistStore(store);
   return project;
 }
 
-export function saveProjectScreenshot(
+export async function saveProjectScreenshot(
   projectId: string,
   screenshot: Omit<ProjectScreenshotRecord, "id" | "createdAt">,
-): ProjectScreenshotRecord {
-  const store = getStore();
-  const project = ensureProject(projectId);
+): Promise<ProjectScreenshotRecord> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
   const record: ProjectScreenshotRecord = {
     ...screenshot,
     id: `${project.id}-screenshot-${Date.now()}`,
@@ -497,16 +645,16 @@ export function saveProjectScreenshot(
 
   project.screenshots = [record, ...project.screenshots].slice(0, 6);
   project.updatedAt = record.createdAt;
-  persistStore(store);
+  await persistStore(store);
   return record;
 }
 
-export function createShare(projectId: string): {
+export async function createShare(projectId: string): Promise<{
   project: ProjectRecord;
   shareToken: string;
-} {
-  const store = getStore();
-  const project = ensureProject(projectId);
+}> {
+  const store = await getStore();
+  const project = await ensureProject(projectId);
 
   if (!project.shareToken) {
     project.shareToken = crypto.randomUUID().replaceAll("-", "");
@@ -516,15 +664,15 @@ export function createShare(projectId: string): {
   project.status = "SHARED";
   project.updatedAt = new Date().toISOString();
 
-  recordEvent(Events.ShareCreated, { projectId }, project.id);
-  persistStore(store);
+  await recordEvent(Events.ShareCreated, { projectId }, project.id);
+  await persistStore(store);
   return { project, shareToken: project.shareToken };
 }
 
-export function getProjectByShareToken(
+export async function getProjectByShareToken(
   token: string,
-): ProjectRecord | undefined {
-  const store = getStore();
+): Promise<ProjectRecord | undefined> {
+  const store = await getStore();
   const projectId = store.shareTokens.get(token);
 
   if (!projectId) {
@@ -534,9 +682,9 @@ export function getProjectByShareToken(
   return store.projects.get(projectId);
 }
 
-function ensureProject(projectId: string): ProjectRecord {
-  const store = getStore();
-  const project = getProject(projectId);
+async function ensureProject(projectId: string): Promise<ProjectRecord> {
+  const store = await getStore();
+  const project = await getProject(projectId);
 
   if (project) {
     return project;

@@ -19,9 +19,9 @@ export default async function ModelPage({
 }) {
   const { projectId } = await params;
   const { variant } = await searchParams;
-  const project = markWalkthroughStarted(
-    markModelGenerated(getProjectOrDemo(projectId).id).id,
-  );
+  const sourceProject = await getProjectOrDemo(projectId);
+  const generatedProject = await markModelGenerated(sourceProject.id);
+  const project = await markWalkthroughStarted(generatedProject.id);
 
   return (
     <ProjectShell projectId={projectId} current="model">

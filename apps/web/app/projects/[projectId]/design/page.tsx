@@ -12,7 +12,7 @@ export default async function DesignPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const project = getProjectOrDemo(projectId);
+  const project = await getProjectOrDemo(projectId);
 
   return (
     <ProjectShell projectId={projectId} current="design">

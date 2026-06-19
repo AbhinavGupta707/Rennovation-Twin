@@ -30,7 +30,7 @@ export async function POST(
     );
   }
 
-  const screenshot = saveProjectScreenshot(projectId, {
+  const screenshot = await saveProjectScreenshot(projectId, {
     kind: "MODEL_VIEW",
     imageDataUrl: body.imageDataUrl,
     variantName: body.variantName?.slice(0, 80),

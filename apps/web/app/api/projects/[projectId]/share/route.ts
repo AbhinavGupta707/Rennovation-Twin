@@ -6,7 +6,7 @@ export async function POST(
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  const { shareToken } = createShare(projectId);
+  const { shareToken } = await createShare(projectId);
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL || new URL(_request.url).origin;
 

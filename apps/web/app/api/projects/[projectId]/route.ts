@@ -6,7 +6,7 @@ export async function GET(
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  const project = getProjectOrDemo(projectId);
+  const project = await getProjectOrDemo(projectId);
 
   return jsonOk({ project });
 }

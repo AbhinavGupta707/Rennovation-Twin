@@ -6,7 +6,7 @@ export async function GET(
   context: { params: Promise<{ token: string }> },
 ) {
   const { token } = await context.params;
-  const project = getProjectByShareToken(token);
+  const project = await getProjectByShareToken(token);
 
   if (!project) {
     return jsonFail(

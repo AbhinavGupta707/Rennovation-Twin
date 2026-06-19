@@ -10,7 +10,7 @@ export async function GET(
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  const project = getProjectOrDemo(projectId);
+  const project = await getProjectOrDemo(projectId);
 
   return jsonOk({ plan: project.plan, project });
 }
@@ -33,7 +33,7 @@ export async function PUT(
     );
   }
 
-  const project = savePlan(projectId, parsed.data);
+  const project = await savePlan(projectId, parsed.data);
   return jsonOk({
     planVersionId: project.planVersions.at(-1)?.id ?? `${project.id}-plan`,
     project,

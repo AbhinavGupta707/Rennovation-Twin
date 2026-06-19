@@ -15,8 +15,8 @@ const funnel = [
 
 export const dynamic = "force-dynamic";
 
-export default function NovusProofPage() {
-  const events = listEvents();
+export default async function NovusProofPage() {
+  const events = await listEvents();
 
   return (
     <section className="page-band">

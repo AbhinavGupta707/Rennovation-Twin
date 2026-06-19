@@ -36,7 +36,7 @@ export async function POST(
   const imageWidth = Number(formData.get("imageWidth")) || 980;
   const imageHeight = Number(formData.get("imageHeight")) || 700;
   const preview = await fileToPreview(file, imageWidth, imageHeight);
-  const project = attachUpload(projectId, {
+  const project = await attachUpload(projectId, {
     fileName: file.name,
     mimeType: file.type,
     sizeBytes: file.size,

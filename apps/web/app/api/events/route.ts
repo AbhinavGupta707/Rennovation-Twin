@@ -4,7 +4,7 @@ import { fail, ok } from "@renovation-twin/types";
 import { listEvents, recordEvent } from "../../../lib/server/project-store";
 
 export async function GET() {
-  return NextResponse.json(ok({ events: listEvents() }));
+  return NextResponse.json(ok({ events: await listEvents() }));
 }
 
 export async function POST(request: Request) {
@@ -20,6 +20,6 @@ export async function POST(request: Request) {
     });
   }
 
-  const event = recordEvent(body.name, body.props, body.projectId);
+  const event = await recordEvent(body.name, body.props, body.projectId);
   return NextResponse.json(ok({ event }));
 }

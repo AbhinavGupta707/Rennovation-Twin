@@ -10,7 +10,7 @@ export default async function UploadPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const project = getProjectOrDemo(projectId);
+  const project = await getProjectOrDemo(projectId);
   const latestUpload = project.uploads[0];
 
   return (

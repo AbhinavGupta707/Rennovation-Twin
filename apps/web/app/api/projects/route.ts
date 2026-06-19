@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     title?: string;
     postcode?: string;
   };
-  const project = createProject(body);
+  const project = await createProject(body);
 
   return NextResponse.json(
     ok({

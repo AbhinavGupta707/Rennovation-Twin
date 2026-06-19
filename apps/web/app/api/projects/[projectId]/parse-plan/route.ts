@@ -6,7 +6,7 @@ export async function POST(
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  const result = parsePlan(projectId);
+  const result = await parsePlan(projectId);
 
   return jsonOk(result);
 }

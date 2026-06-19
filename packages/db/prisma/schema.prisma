@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model Project {
@@ -21,6 +20,7 @@ model Project {
   scalePxPerMeter Float?
   currentPlanId   String?
   shareToken      String?       @unique
+  stateJson       Json?
   events          EventLog[]
   uploads         UploadAsset[]
   planVersions    PlanVersion[]

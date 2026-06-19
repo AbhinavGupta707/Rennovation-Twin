@@ -24,7 +24,7 @@ export async function POST(
     householdType?: string;
     roomPriorities?: unknown;
   };
-  const project = getProjectOrDemo(projectId);
+  const project = await getProjectOrDemo(projectId);
   const prompt =
     body.prompt?.trim() || "Create a polished, practical renovation concept.";
   const stylePreset = body.stylePreset?.trim() || "Warm Minimal";
@@ -97,7 +97,7 @@ export async function POST(
     );
   }
 
-  saveVariant(project.id, variant, {
+  await saveVariant(project.id, variant, {
     provider,
     usedFallback: provider === "fallback",
     budgetLevel: intent.budgetLevel,

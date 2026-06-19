@@ -6,7 +6,7 @@ export async function POST(
   context: { params: Promise<{ projectId: string }> },
 ) {
   const { projectId } = await context.params;
-  const project = markReportExported(projectId);
+  const project = await markReportExported(projectId);
   const report = project.reportExports[0];
 
   return jsonOk({
