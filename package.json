@@ -11,7 +11,13 @@
     "test": "pnpm -r test",
     "test:e2e": "playwright test",
     "format": "prettier --write .",
-    "db:generate": "pnpm --filter @renovation-twin/db generate"
+    "db:generate": "pnpm --filter @renovation-twin/db generate",
+    "db:push": "pnpm --filter @renovation-twin/db exec prisma db push",
+    "db:studio": "pnpm --filter @renovation-twin/db exec prisma studio",
+    "db:validate": "pnpm --filter @renovation-twin/db exec prisma validate",
+    "supabase:db:push": "supabase db push",
+    "supabase:db:lint": "supabase db lint --local --fail-on warning",
+    "supabase:status": "supabase status"
   },
   "devDependencies": {
     "@playwright/test": "1.57.0",

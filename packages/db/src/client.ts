@@ -1,3 +1,5 @@
+import { PrismaPg } from "@prisma/adapter-pg";
+
 type PrismaClientLike = {
   $connect(): Promise<void>;
   $disconnect(): Promise<void>;
@@ -13,14 +15,21 @@ export async function getPrismaClient(): Promise<PrismaClientLike> {
   }
 
   const prismaModule = (await import("@prisma/client")) as unknown as {
-    PrismaClient?: new () => PrismaClientLike;
+    PrismaClient?: new (options: { adapter: PrismaPg }) => PrismaClientLike;
   };
 
   if (!prismaModule.PrismaClient) {
     throw new Error("Prisma client is not generated. Run `pnpm db:generate` after configuring DATABASE_URL.");
   }
 
-  const client = new prismaModule.PrismaClient();
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is required when using the Prisma project store adapter.");
+  }
+
+  const adapter = new PrismaPg({ connectionString });
+  const client = new prismaModule.PrismaClient({ adapter });
 
   if (process.env.NODE_ENV !== "production") {
     globalForPrisma.prisma = client;

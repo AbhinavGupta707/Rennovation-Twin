@@ -11,7 +11,10 @@
     "test": "tsc --noEmit"
   },
   "dependencies": {
-    "@prisma/client": "^7.1.0"
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.1.0",
+    "dotenv": "^17.4.2",
+    "pg": "^8.22.0"
   },
   "devDependencies": {
     "@types/node": "^25.0.2",
