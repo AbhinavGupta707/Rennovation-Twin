@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, FileText } from "lucide-react";
-import { londonFlatPlan, londonFlatVariants } from "@renovation-twin/fixtures";
+import { londonFlatPlan } from "@renovation-twin/fixtures";
 import { GenerateModelButton } from "../../../components/generate-model-button";
 import { PlanSummary } from "../../components/plan-summary";
 
@@ -20,7 +20,7 @@ export default function LondonFlatDemoPage() {
             <span className="status-pill">
               <CheckCircle2 size={16} aria-hidden="true" /> Fixture loaded
             </span>
-            <span>{londonFlatVariants.length} variants available</span>
+            <span>1 sample variant available</span>
           </div>
           <div className="stage-body">
             <p className="eyebrow">Fastest demo path</p>

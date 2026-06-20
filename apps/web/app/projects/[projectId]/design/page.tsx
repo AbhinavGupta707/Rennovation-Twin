@@ -18,7 +18,7 @@ export default async function DesignPage({
     <ProjectShell projectId={projectId} current="design">
       <div className="stage-toolbar">
         <span className="status-pill">Fireworks with fallback</span>
-        <span>{project.variants.length} styles</span>
+        <span>3 style presets</span>
       </div>
       <div className="stage-body">
         <DesignVariantPanel

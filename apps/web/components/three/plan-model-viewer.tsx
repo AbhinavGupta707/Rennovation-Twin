@@ -11,7 +11,6 @@ import {
 import { Canvas, type RootState, useFrame, useThree } from "@react-three/fiber";
 import {
   Environment,
-  Html,
   OrbitControls,
   PerspectiveCamera,
 } from "@react-three/drei";
@@ -19,6 +18,7 @@ import {
   ArrowDown,
   ArrowUp,
   Camera,
+  DoorOpen,
   Pause,
   Play,
   RotateCcw,
@@ -48,6 +48,8 @@ const baseVariant: DesignVariantSchema = {
   warnings: []
 };
 
+const hiddenVariantNames = new Set(["Rental Staging"]);
+
 type ViewerProps = {
   projectId?: string;
   plan: PlanSchema;
@@ -65,6 +67,7 @@ type CameraPreset = {
   fov: number;
   controls: "orbit" | "standing";
   bounds?: MovementBounds;
+  roomId?: string;
 };
 
 type NavigationIntent = "forward" | "backward" | "turn-left" | "turn-right";
@@ -72,6 +75,26 @@ type NavigationIntent = "forward" | "backward" | "turn-left" | "turn-right";
 type NavigationCommand = {
   id: number;
   intent: NavigationIntent;
+};
+
+type WalkContext = {
+  roomId?: string;
+  position?: [number, number, number];
+  target?: [number, number, number];
+  revision: number;
+};
+
+type StandingPosition = {
+  x: number;
+  z: number;
+};
+
+type DoorPortal = {
+  id: string;
+  label: string;
+  position: StandingPosition;
+  roomIds: string[];
+  synthetic: boolean;
 };
 
 export function PlanModelViewer({
@@ -82,18 +105,33 @@ export function PlanModelViewer({
   readOnly = false,
 }: ViewerProps) {
   const scene = useMemo(() => planToSceneSpec(plan), [plan]);
-  const allVariants = useMemo(() => [baseVariant, ...variants], [variants]);
+  const allVariants = useMemo(
+    () =>
+      [baseVariant, ...variants].filter(
+        (variant) => !hiddenVariantNames.has(variant.name),
+      ),
+    [variants],
+  );
   const defaultVariantName =
     allVariants.find((variant) => variant.name === initialVariantName)?.name ?? allVariants[1]?.name ?? allVariants[0]!.name;
+  const roomBounds = useMemo(() => getRoomCameraBounds(plan), [plan]);
+  const doorPortals = useMemo(
+    () => createDoorPortals(plan, roomBounds),
+    [plan, roomBounds],
+  );
   const [activeVariantName, setActiveVariantName] = useState(defaultVariantName);
   const cameraPresets = useMemo(
-    () => createCameraPresets(scene, plan),
-    [scene, plan],
+    () => createCameraPresets(scene, plan, roomBounds),
+    [scene, plan, roomBounds],
   );
   const [activeCameraPresetId, setActiveCameraPresetId] =
     useState<CameraPreset["id"]>("overview");
   const [guidedMode, setGuidedMode] = useState(false);
-  const [showRoomLabels, setShowRoomLabels] = useState(false);
+  const [walkContext, setWalkContext] = useState<WalkContext>({
+    revision: 0,
+  });
+  const [standingPosition, setStandingPosition] =
+    useState<StandingPosition | null>(null);
   const [captureState, setCaptureState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -108,9 +146,54 @@ export function PlanModelViewer({
   const activeVariant = allVariants.find((variant) => variant.name === activeVariantName) ?? allVariants[0]!;
   const furniture =
     activeVariant.furniture.length > 0 ? activeVariant.furniture : createBaseFurniture(plan, activeVariant);
-  const activeCameraPreset =
+  const baseActiveCameraPreset =
     cameraPresets.find((preset) => preset.id === activeCameraPresetId) ??
     cameraPresets[0]!;
+  const activeRoom =
+    baseActiveCameraPreset.controls === "standing"
+      ? roomBounds.find(
+          (room) =>
+            room.id === (walkContext.roomId ?? baseActiveCameraPreset.roomId),
+        )
+      : undefined;
+  const activeCameraPreset = useMemo(
+    () =>
+      createActiveCameraPreset(
+        baseActiveCameraPreset,
+        activeRoom,
+        walkContext,
+      ),
+    [activeRoom, baseActiveCameraPreset, walkContext],
+  );
+  const portalTarget = useMemo(
+    () =>
+      findNearestPortalTarget(
+        doorPortals,
+        roomBounds,
+        activeRoom,
+        standingPosition,
+      ),
+    [activeRoom, doorPortals, roomBounds, standingPosition],
+  );
+
+  const selectCameraPreset = useCallback(
+    (
+      preset: CameraPreset,
+      options: { keepGuidedMode?: boolean } = {},
+    ) => {
+      if (!options.keepGuidedMode) {
+        setGuidedMode(false);
+      }
+
+      setActiveCameraPresetId(preset.id);
+      setStandingPosition(null);
+      setWalkContext((current) => ({
+        roomId: preset.roomId,
+        revision: current.revision + 1,
+      }));
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!guidedMode) {
@@ -126,19 +209,21 @@ export function PlanModelViewer({
     }
 
     const timer = window.setInterval(() => {
-      setActiveCameraPresetId((current) => {
-        const tourPresets = cameraPresets.filter(
-          (preset) => preset.id !== "overview",
-        );
-        const currentIndex = tourPresets.findIndex(
-          (preset) => preset.id === current,
-        );
-        return tourPresets[(currentIndex + 1) % tourPresets.length]!.id;
-      });
-    }, 2600);
+      const tourPresets = cameraPresets.filter(
+        (preset) => preset.id !== "overview",
+      );
+      const currentIndex = tourPresets.findIndex(
+        (preset) => preset.id === activeCameraPresetId,
+      );
+      const nextPreset = tourPresets[(currentIndex + 1) % tourPresets.length];
+
+      if (nextPreset) {
+        selectCameraPreset(nextPreset, { keepGuidedMode: true });
+      }
+    }, 3200);
 
     return () => window.clearInterval(timer);
-  }, [cameraPresets, guidedMode]);
+  }, [activeCameraPresetId, cameraPresets, guidedMode, selectCameraPreset]);
 
   useEffect(() => {
     if (!projectId || readOnly || trackedViewRef.current) {
@@ -202,6 +287,31 @@ export function PlanModelViewer({
     setNavigationIntent(null);
   }
 
+  function openPortal() {
+    if (!portalTarget) {
+      return;
+    }
+
+    const nextPosition = createDoorEntryPosition(
+      portalTarget.portal,
+      portalTarget.targetRoom,
+    );
+
+    setGuidedMode(false);
+    setActiveCameraPresetId("walkthrough");
+    setStandingPosition({ x: nextPosition[0], z: nextPosition[2] });
+    setWalkContext((current) => ({
+      roomId: portalTarget.targetRoom.id,
+      position: nextPosition,
+      target: [
+        portalTarget.targetRoom.center.x,
+        1.34,
+        portalTarget.targetRoom.center.z,
+      ],
+      revision: current.revision + 1,
+    }));
+  }
+
   return (
     <div className="model-viewer">
       <div className="model-controls" aria-label="3D model controls">
@@ -222,14 +332,6 @@ export function PlanModelViewer({
             </button>
           ))}
         </div>
-        <label className="toggle-control">
-          <input
-            type="checkbox"
-            checked={showRoomLabels}
-            onChange={(event) => setShowRoomLabels(event.currentTarget.checked)}
-          />
-          Room labels
-        </label>
       </div>
 
       <div className="camera-controls" aria-label="Camera presets">
@@ -241,8 +343,7 @@ export function PlanModelViewer({
             aria-pressed={preset.id === activeCameraPreset.id}
             title={preset.description}
             onClick={() => {
-              setGuidedMode(false);
-              setActiveCameraPresetId(preset.id);
+              selectCameraPreset(preset);
             }}
           >
             <ScanSearch size={16} aria-hidden="true" />
@@ -289,13 +390,6 @@ export function PlanModelViewer({
         </p>
       ) : null}
 
-      {activeCameraPreset.controls === "standing" ? (
-        <RoomMovementControls
-          onStart={startNavigation}
-          onStop={stopNavigation}
-        />
-      ) : null}
-
       <div className="model-canvas-shell">
         <Canvas
           shadows
@@ -326,15 +420,33 @@ export function PlanModelViewer({
             scene={scene}
             variant={activeVariant}
             furniture={furniture}
-            showRoomLabels={showRoomLabels}
           />
           <CameraControlsRig
             navigationCommand={navigationCommand}
             navigationIntent={navigationIntent}
             preset={activeCameraPreset}
+            onPositionChange={setStandingPosition}
           />
           <Environment preset="apartment" />
         </Canvas>
+        {activeCameraPreset.controls === "standing" ? (
+          <>
+            {portalTarget ? (
+              <button
+                type="button"
+                className="door-prompt"
+                onClick={openPortal}
+              >
+                <DoorOpen size={17} aria-hidden="true" />
+                Open {portalTarget.targetRoom.label}
+              </button>
+            ) : null}
+            <RoomMovementControls
+              onStart={startNavigation}
+              onStop={stopNavigation}
+            />
+          </>
+        ) : null}
       </div>
 
       <div className="model-meta" aria-label="Model statistics">
@@ -410,10 +522,12 @@ function RoomMovementControls({
 function CameraControlsRig({
   navigationCommand,
   navigationIntent,
+  onPositionChange,
   preset,
 }: {
   navigationCommand: NavigationCommand | null;
   navigationIntent: NavigationIntent | null;
+  onPositionChange?: (position: StandingPosition) => void;
   preset: CameraPreset;
 }) {
   if (preset.controls === "standing") {
@@ -421,6 +535,7 @@ function CameraControlsRig({
       <StandingLookControls
         navigationCommand={navigationCommand}
         navigationIntent={navigationIntent}
+        onPositionChange={onPositionChange}
         preset={preset}
       />
     );
@@ -457,10 +572,12 @@ function OrbitCameraControls({ preset }: { preset: CameraPreset }) {
 function StandingLookControls({
   navigationCommand,
   navigationIntent,
+  onPositionChange,
   preset,
 }: {
   navigationCommand: NavigationCommand | null;
   navigationIntent: NavigationIntent | null;
+  onPositionChange?: (position: StandingPosition) => void;
   preset: CameraPreset;
 }) {
   const { camera, gl } = useThree();
@@ -498,8 +615,9 @@ function StandingLookControls({
       positionRef.current = nextPosition;
       camera.position.set(...nextPosition);
       applyStandingLook(camera, nextPosition, orientation);
+      onPositionChange?.({ x: nextPosition[0], z: nextPosition[2] });
     },
-    [camera, preset.bounds],
+    [camera, onPositionChange, preset.bounds],
   );
 
   const turnCamera = useCallback(
@@ -528,7 +646,8 @@ function StandingLookControls({
     positionRef.current = position;
     camera.position.set(...position);
     applyStandingLook(camera, position, orientation);
-  }, [camera, preset]);
+    onPositionChange?.({ x: position[0], z: position[2] });
+  }, [camera, onPositionChange, preset]);
 
   useEffect(() => {
     if (
@@ -749,13 +868,11 @@ function clampPositionToBounds(
 function PlanScene({
   scene,
   variant,
-  furniture,
-  showRoomLabels
+  furniture
 }: {
   scene: ReturnType<typeof planToSceneSpec>;
   variant: DesignVariantSchema;
   furniture: FurnitureItem[];
-  showRoomLabels: boolean;
 }) {
   return (
     <group>
@@ -787,32 +904,56 @@ function PlanScene({
       ))}
 
       {scene.openings.map((opening) => (
-        <mesh key={opening.id} position={opening.center} rotation={[0, opening.rotationY, 0]}>
-          <boxGeometry args={opening.size} />
-          <meshStandardMaterial
-            color={opening.type === "door" ? variant.palette.accent : "#8ec5dc"}
-            transparent
-            opacity={opening.type === "door" ? 0.72 : 0.58}
-            roughness={0.34}
-          />
-        </mesh>
+        <OpeningMarker
+          key={opening.id}
+          opening={opening}
+          accentColor={variant.palette.accent}
+        />
       ))}
 
       {furniture.map((item) => (
         <ProceduralFurniture key={item.id} item={item} fallbackColor={variant.palette.textile} accentColor={variant.palette.accent} />
       ))}
-
-      {showRoomLabels
-        ? scene.roomLabels.map((room) => (
-            <Html key={room.id} position={room.position} transform occlude>
-              <div className="room-label">
-                <strong>{room.label}</strong>
-                {room.areaM2 ? <span>{room.areaM2.toFixed(1)}m2</span> : null}
-              </div>
-            </Html>
-          ))
-        : null}
     </group>
+  );
+}
+
+function OpeningMarker({
+  opening,
+  accentColor,
+}: {
+  opening: ReturnType<typeof planToSceneSpec>["openings"][number];
+  accentColor: string;
+}) {
+  if (opening.type === "door") {
+    return (
+      <group position={opening.center} rotation={[0, opening.rotationY, 0]}>
+        <mesh position={[0, -opening.size[1] / 2 + 0.04, 0]}>
+          <boxGeometry args={[opening.size[0], 0.08, 0.08]} />
+          <meshStandardMaterial color={accentColor} roughness={0.46} />
+        </mesh>
+        <mesh position={[-opening.size[0] * 0.42, 0, 0]}>
+          <boxGeometry args={[0.08, opening.size[1] * 0.86, 0.06]} />
+          <meshStandardMaterial color={accentColor} roughness={0.52} />
+        </mesh>
+        <mesh position={[0, opening.size[1] * 0.42, 0]}>
+          <boxGeometry args={[opening.size[0], 0.08, 0.06]} />
+          <meshStandardMaterial color={accentColor} roughness={0.52} />
+        </mesh>
+      </group>
+    );
+  }
+
+  return (
+    <mesh position={opening.center} rotation={[0, opening.rotationY, 0]}>
+      <boxGeometry args={opening.size} />
+      <meshStandardMaterial
+        color="#8ec5dc"
+        transparent
+        opacity={0.58}
+        roughness={0.34}
+      />
+    </mesh>
   );
 }
 
@@ -917,6 +1058,7 @@ function TableLeg({ x, z, height, color }: { x: number; z: number; height: numbe
 function createCameraPresets(
   scene: ReturnType<typeof planToSceneSpec>,
   plan: PlanSchema,
+  rooms: RoomCameraBounds[] = getRoomCameraBounds(plan),
 ): CameraPreset[] {
   const width = Math.max(scene.bounds.widthM, 3);
   const depth = Math.max(scene.bounds.depthM, 3);
@@ -926,7 +1068,6 @@ function createCameraPresets(
     0.2,
     planCenter.z,
   ];
-  const rooms = getRoomCameraBounds(plan);
   const wholePlan: RoomCameraBounds = {
     id: "whole-plan",
     label: "Plan",
@@ -1077,6 +1218,7 @@ function createRoomCameraPreset({
     fov: 64,
     controls: "standing",
     bounds: getMovementBounds(room),
+    roomId: room.id,
   };
 }
 
@@ -1129,6 +1271,30 @@ function createWalkthroughPreset(
     fov: 68,
     controls: "standing",
     bounds: getMovementBounds(targetRoom),
+    roomId: targetRoom.id,
+  };
+}
+
+function createActiveCameraPreset(
+  preset: CameraPreset,
+  room: RoomCameraBounds | undefined,
+  context: WalkContext,
+): CameraPreset {
+  if (preset.controls !== "standing" || !room) {
+    return preset;
+  }
+
+  return {
+    ...preset,
+    label: room.id === preset.roomId ? preset.label : room.label,
+    description:
+      room.id === preset.roomId
+        ? preset.description
+        : `Eye-level camera standing inside ${room.label}.`,
+    position: context.position ?? preset.position,
+    target: context.target ?? preset.target,
+    bounds: getMovementBounds(room),
+    roomId: room.id,
   };
 }
 
@@ -1138,8 +1304,8 @@ function getRoomInset(room: RoomCameraBounds) {
 
 function getMovementBounds(room: RoomCameraBounds): MovementBounds {
   const inset = Math.min(
-    Math.max(Math.min(room.width, room.depth) * 0.14, 0.32),
-    0.72,
+    Math.max(Math.min(room.width, room.depth) * 0.08, 0.2),
+    0.45,
   );
 
   if (
@@ -1160,6 +1326,219 @@ function getMovementBounds(room: RoomCameraBounds): MovementBounds {
     minZ: room.minZ + inset,
     maxZ: room.maxZ - inset,
   };
+}
+
+function createDoorPortals(
+  plan: PlanSchema,
+  rooms: RoomCameraBounds[],
+): DoorPortal[] {
+  const wallById = new Map(plan.walls.map((wall) => [wall.id, wall]));
+  const realDoorPortals = plan.openings.flatMap((opening): DoorPortal[] => {
+    if (opening.type !== "door") {
+      return [];
+    }
+
+    const wall = wallById.get(opening.wallId);
+
+    if (!wall) {
+      return [];
+    }
+
+    const position = getOpeningWallPosition(opening, wall, plan.scalePxPerMeter);
+    const roomIds = rooms
+      .filter((room) => isPositionNearRoom(position, room, 0.28))
+      .map((room) => room.id);
+
+    return roomIds.length >= 2
+      ? [
+          {
+            id: opening.id,
+            label: "Door",
+            position,
+            roomIds,
+            synthetic: false,
+          },
+        ]
+      : [];
+  });
+
+  return [
+    ...realDoorPortals,
+    ...createSyntheticRoomPortals(rooms, new Set(realDoorPortals.map((portal) => portal.id))),
+  ];
+}
+
+function createSyntheticRoomPortals(
+  rooms: RoomCameraBounds[],
+  existingPortalIds: Set<string>,
+): DoorPortal[] {
+  const portals: DoorPortal[] = [];
+
+  for (let leftIndex = 0; leftIndex < rooms.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < rooms.length;
+      rightIndex += 1
+    ) {
+      const left = rooms[leftIndex]!;
+      const right = rooms[rightIndex]!;
+      const portal = createAdjacentRoomPortal(left, right);
+
+      if (!portal || existingPortalIds.has(portal.id)) {
+        continue;
+      }
+
+      portals.push(portal);
+      existingPortalIds.add(portal.id);
+    }
+  }
+
+  return portals;
+}
+
+function createAdjacentRoomPortal(
+  left: RoomCameraBounds,
+  right: RoomCameraBounds,
+): DoorPortal | null {
+  const tolerance = 0.08;
+  const verticalTouch =
+    Math.abs(left.maxX - right.minX) <= tolerance ||
+    Math.abs(right.maxX - left.minX) <= tolerance;
+
+  if (verticalTouch) {
+    const sharedX =
+      Math.abs(left.maxX - right.minX) <= tolerance ? left.maxX : right.maxX;
+    const overlapMin = Math.max(left.minZ, right.minZ);
+    const overlapMax = Math.min(left.maxZ, right.maxZ);
+
+    if (overlapMax - overlapMin >= 0.85) {
+      return {
+        id: `passage-${left.id}-${right.id}`,
+        label: "Passage",
+        position: { x: sharedX, z: (overlapMin + overlapMax) / 2 },
+        roomIds: [left.id, right.id],
+        synthetic: true,
+      };
+    }
+  }
+
+  const horizontalTouch =
+    Math.abs(left.maxZ - right.minZ) <= tolerance ||
+    Math.abs(right.maxZ - left.minZ) <= tolerance;
+
+  if (horizontalTouch) {
+    const sharedZ =
+      Math.abs(left.maxZ - right.minZ) <= tolerance ? left.maxZ : right.maxZ;
+    const overlapMin = Math.max(left.minX, right.minX);
+    const overlapMax = Math.min(left.maxX, right.maxX);
+
+    if (overlapMax - overlapMin >= 0.85) {
+      return {
+        id: `passage-${left.id}-${right.id}`,
+        label: "Passage",
+        position: { x: (overlapMin + overlapMax) / 2, z: sharedZ },
+        roomIds: [left.id, right.id],
+        synthetic: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+function getOpeningWallPosition(
+  opening: PlanSchema["openings"][number],
+  wall: PlanSchema["walls"][number],
+  scalePxPerMeter: number,
+): StandingPosition {
+  const start = {
+    x: wall.start.x / scalePxPerMeter,
+    z: wall.start.y / scalePxPerMeter,
+  };
+  const end = {
+    x: wall.end.x / scalePxPerMeter,
+    z: wall.end.y / scalePxPerMeter,
+  };
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const length = Math.max(Math.hypot(dx, dz), 0.001);
+  const offset = Math.min(Math.max(opening.offsetM, 0), length);
+
+  return {
+    x: start.x + (dx / length) * offset,
+    z: start.z + (dz / length) * offset,
+  };
+}
+
+function isPositionNearRoom(
+  position: StandingPosition,
+  room: RoomCameraBounds,
+  tolerance: number,
+) {
+  return (
+    position.x >= room.minX - tolerance &&
+    position.x <= room.maxX + tolerance &&
+    position.z >= room.minZ - tolerance &&
+    position.z <= room.maxZ + tolerance
+  );
+}
+
+function findNearestPortalTarget(
+  portals: DoorPortal[],
+  rooms: RoomCameraBounds[],
+  currentRoom: RoomCameraBounds | undefined,
+  position: StandingPosition | null,
+): { portal: DoorPortal; targetRoom: RoomCameraBounds } | null {
+  if (!currentRoom || !position) {
+    return null;
+  }
+
+  const nearest = portals
+    .filter((portal) => portal.roomIds.includes(currentRoom.id))
+    .map((portal) => {
+      const targetRoomId = portal.roomIds.find(
+        (roomId) => roomId !== currentRoom.id,
+      );
+      const targetRoom = rooms.find((room) => room.id === targetRoomId);
+      const distance = Math.hypot(
+        portal.position.x - position.x,
+        portal.position.z - position.z,
+      );
+
+      return targetRoom ? { portal, targetRoom, distance } : null;
+    })
+    .filter((candidate): candidate is {
+      portal: DoorPortal;
+      targetRoom: RoomCameraBounds;
+      distance: number;
+    } => Boolean(candidate))
+    .sort((left, right) => left.distance - right.distance)[0];
+
+  if (!nearest || nearest.distance > (nearest.portal.synthetic ? 0.8 : 1.15)) {
+    return null;
+  }
+
+  return {
+    portal: nearest.portal,
+    targetRoom: nearest.targetRoom,
+  };
+}
+
+function createDoorEntryPosition(
+  portal: DoorPortal,
+  targetRoom: RoomCameraBounds,
+): [number, number, number] {
+  const dx = targetRoom.center.x - portal.position.x;
+  const dz = targetRoom.center.z - portal.position.z;
+  const length = Math.max(Math.hypot(dx, dz), 0.001);
+  const step = portal.synthetic ? 0.45 : 0.65;
+  const position: [number, number, number] = [
+    portal.position.x + (dx / length) * step,
+    1.55,
+    portal.position.z + (dz / length) * step,
+  ];
+
+  return clampPositionToBounds(position, getMovementBounds(targetRoom));
 }
 
 function findRoomBounds(rooms: RoomCameraBounds[], pattern: RegExp) {

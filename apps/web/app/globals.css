@@ -562,12 +562,15 @@ a {
 }
 
 .walk-controls {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 4;
   display: grid;
   grid-template-columns: repeat(3, 2.75rem);
   grid-template-rows: repeat(2, 2.75rem);
-  gap: 1rem;
+  gap: var(--space-2);
   width: max-content;
-  margin-bottom: var(--space-2);
 }
 
 .walk-control-button {
@@ -578,7 +581,8 @@ a {
   height: 2.75rem;
   border: 1px solid rgba(25, 103, 210, 0.26);
   border-radius: 0.45rem;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(8px);
   color: #0d4fa6;
   box-shadow: 0 8px 18px rgba(20, 32, 28, 0.08);
 }
@@ -611,6 +615,33 @@ a {
 .walk-control-backward {
   grid-column: 2;
   grid-row: 2;
+}
+
+.door-prompt {
+  position: absolute;
+  right: 1rem;
+  bottom: 6.9rem;
+  z-index: 4;
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid rgba(184, 119, 69, 0.3);
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(8px);
+  color: #7a4b24;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 0.65rem 0.8rem;
+  box-shadow: 0 12px 28px rgba(20, 32, 28, 0.12);
+}
+
+.door-prompt:hover,
+.door-prompt:focus-visible {
+  border-color: rgba(184, 119, 69, 0.55);
+  background: rgba(255, 251, 245, 0.92);
 }
 
 .toggle-control input {
@@ -705,6 +736,10 @@ a {
   align-items: start;
 }
 
+.design-workflow {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .proof-grid {
   grid-template-columns: 1fr;
 }
@@ -743,6 +778,34 @@ a {
 
 .panel-title {
   font-size: clamp(1.25rem, 2.6vw, 2rem);
+}
+
+.panel-subcopy {
+  max-width: 54ch;
+  color: var(--muted);
+  margin: 0.55rem 0 0;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.design-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.design-summary-strip span {
+  display: inline-flex;
+  min-height: 2.35rem;
+  align-items: center;
+  border: 1px solid rgba(20, 32, 28, 0.1);
+  border-radius: 999px;
+  background: rgba(47, 125, 85, 0.08);
+  color: #235c3d;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 850;
 }
 
 .upload-dropzone {
@@ -946,6 +1009,11 @@ a {
   gap: var(--space-3);
 }
 
+.design-workflow .variant-grid {
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+}
+
+.variant-summary,
 .variant-rationale {
   display: flex;
   align-items: flex-start;
@@ -958,6 +1026,53 @@ a {
   padding: 0.75rem 0.85rem;
   font-weight: 800;
   line-height: 1.45;
+}
+
+.variant-room-highlight {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-2);
+  line-height: 1.45;
+}
+
+.variant-room-highlight strong {
+  font-size: 0.98rem;
+}
+
+.variant-room-highlight span {
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.advanced-panel,
+.variant-details {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.64);
+  padding: var(--space-3);
+}
+
+.advanced-panel summary,
+.variant-details summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--foreground);
+  font-weight: 900;
+}
+
+.advanced-panel[open],
+.variant-details[open] {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.advanced-panel[open] summary,
+.variant-details[open] summary {
+  margin-bottom: var(--space-1);
 }
 
 .icon-link {

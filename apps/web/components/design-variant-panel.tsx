@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, CheckCircle2, Loader2, Sparkles, TriangleAlert } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Loader2,
+  SlidersHorizontal,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
 import type {
   ApiResponse,
   DesignVariantSchema,
@@ -11,7 +18,6 @@ import type {
 
 const presets = [
   "Warm Minimal",
-  "Rental Staging",
   "Compact Family",
   "Resale Neutral",
 ];
@@ -24,7 +30,6 @@ const budgetOptions = [
 
 const intentOptions = [
   "family living",
-  "rental staging",
   "work-from-home",
   "resale uplift",
 ];
@@ -52,9 +57,10 @@ export function DesignVariantPanel({
   initialVariants: DesignVariantSchema[];
   rooms: Room[];
 }) {
-  const [variants, setVariants] = useState(initialVariants);
+  const visibleInitialVariants = initialVariants.filter(isVisibleVariant);
+  const [variants, setVariants] = useState(visibleInitialVariants);
   const [stylePreset, setStylePreset] = useState(
-    initialVariants[0]?.name ?? presets[0]!,
+    visibleInitialVariants[0]?.name ?? presets[0]!,
   );
   const [budgetLevel, setBudgetLevel] = useState<
     (typeof budgetOptions)[number]["value"]
@@ -93,7 +99,7 @@ export function DesignVariantPanel({
       setVariants((current) => [
         data.variant,
         ...current.filter((variant) => variant.name !== data.variant.name),
-      ]);
+      ].filter(isVisibleVariant));
       setProvider(data.provider);
       setMessage(
         data.provider === "fallback"
@@ -110,107 +116,41 @@ export function DesignVariantPanel({
   }
 
   return (
-    <div className="workflow-grid">
+    <div className="workflow-grid design-workflow">
       <section className="tool-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">AI design variants</p>
-            <h1 className="section-title">Generate an intent-aware direction.</h1>
+            <p className="eyebrow">Design direction</p>
+            <h1 className="panel-title">Choose a renovation concept.</h1>
+            <p className="panel-subcopy">
+              Start from a clear style, then fine-tune the brief only if needed.
+            </p>
           </div>
           <span className="status-pill">{provider ?? "ready"}</span>
         </div>
 
-        <div className="intent-grid">
-          <div>
-            <span className="control-label">Budget level</span>
-            <div className="segmented-control" aria-label="Budget level">
-              {budgetOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={budgetLevel === option.value}
-                  onClick={() => setBudgetLevel(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <span className="control-label">Use intent</span>
-            <div className="segmented-control" aria-label="Use intent">
-              {intentOptions.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={useIntent === option}
-                  onClick={() => setUseIntent(option)}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <span className="control-label">Household</span>
-            <div className="segmented-control" aria-label="Household type">
-              {householdOptions.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  aria-pressed={householdType === option}
-                  onClick={() => setHouseholdType(option)}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="design-summary-strip" aria-label="Current brief">
+          <span>{budgetOptions.find((option) => option.value === budgetLevel)?.label}</span>
+          <span>{useIntent}</span>
+          <span>{householdType}</span>
+          <span>{roomPriorities.length} priority rooms</span>
         </div>
 
-        <div className="segmented-control" aria-label="Style presets">
-          {presets.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              aria-pressed={stylePreset === preset}
-              onClick={() => setStylePreset(preset)}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
-
-        <fieldset className="priority-fieldset">
-          <legend>Priority rooms</legend>
-          <div className="priority-list">
-            {rooms.map((room) => (
-              <label key={room.id}>
-                <input
-                  type="checkbox"
-                  checked={roomPriorities.includes(room.id)}
-                  onChange={(event) => {
-                    setRoomPriorities((current) =>
-                      event.currentTarget.checked
-                        ? [...current, room.id]
-                        : current.filter((roomId) => roomId !== room.id),
-                    );
-                  }}
-                />
-                <span>{room.label}</span>
-              </label>
+        <div>
+          <span className="control-label">Style</span>
+          <div className="segmented-control" aria-label="Style presets">
+            {presets.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                aria-pressed={stylePreset === preset}
+                onClick={() => setStylePreset(preset)}
+              >
+                {preset}
+              </button>
             ))}
           </div>
-        </fieldset>
-
-        <label className="field-block">
-          <span>Variant prompt</span>
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.currentTarget.value)}
-            rows={5}
-          />
-        </label>
+        </div>
 
         <div className="button-row compact-row">
           <button
@@ -233,7 +173,7 @@ export function DesignVariantPanel({
             Preview in 3D <ArrowRight size={18} aria-hidden="true" />
           </Link>
           <Link
-            className="button button-primary"
+            className="button button-secondary"
             href={`/projects/${projectId}/report`}
           >
             Open report <ArrowRight size={18} aria-hidden="true" />
@@ -252,10 +192,95 @@ export function DesignVariantPanel({
             {message}
           </p>
         ) : null}
+
+        <details className="advanced-panel">
+          <summary>
+            <SlidersHorizontal size={18} aria-hidden="true" />
+            Fine tune brief
+          </summary>
+          <div className="intent-grid">
+            <div>
+              <span className="control-label">Budget level</span>
+              <div className="segmented-control" aria-label="Budget level">
+                {budgetOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={budgetLevel === option.value}
+                    onClick={() => setBudgetLevel(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="control-label">Use intent</span>
+              <div className="segmented-control" aria-label="Use intent">
+                {intentOptions.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={useIntent === option}
+                    onClick={() => setUseIntent(option)}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <span className="control-label">Household</span>
+              <div className="segmented-control" aria-label="Household type">
+                {householdOptions.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={householdType === option}
+                    onClick={() => setHouseholdType(option)}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <fieldset className="priority-fieldset">
+            <legend>Priority rooms</legend>
+            <div className="priority-list">
+              {rooms.map((room) => (
+                <label key={room.id}>
+                  <input
+                    type="checkbox"
+                    checked={roomPriorities.includes(room.id)}
+                    onChange={(event) => {
+                      setRoomPriorities((current) =>
+                        event.currentTarget.checked
+                          ? [...current, room.id]
+                          : current.filter((roomId) => roomId !== room.id),
+                      );
+                    }}
+                  />
+                  <span>{room.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <label className="field-block">
+            <span>Brief prompt</span>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.currentTarget.value)}
+              rows={4}
+            />
+          </label>
+        </details>
       </section>
 
       <section className="variant-grid" aria-label="Design variants">
-        {variants.map((variant) => (
+        {variants.filter(isVisibleVariant).map((variant) => (
           <article className="card variant-card" key={variant.name}>
             <div className="card-heading-row">
               <div>
@@ -270,9 +295,9 @@ export function DesignVariantPanel({
               </Link>
             </div>
             {variant.rationale ? (
-              <p className="variant-rationale">
+              <p className="variant-summary">
                 <CheckCircle2 size={16} aria-hidden="true" />
-                <span>{variant.rationale}</span>
+                <span>{summarizeText(variant.rationale, 145)}</span>
               </p>
             ) : null}
             <div className="palette-row" aria-label={`${variant.name} palette`}>
@@ -281,26 +306,47 @@ export function DesignVariantPanel({
               <span style={{ backgroundColor: variant.palette.accent }} />
               <span style={{ backgroundColor: variant.palette.textile }} />
             </div>
-            <ul className="compact-list">
-              {variant.roomNotes.slice(0, 3).map((note) => (
-                <li key={`${variant.name}-${note.roomId}`}>
-                  <strong>{note.summary}</strong>
-                  <span>{note.changes.slice(0, 2).join(", ")}</span>
-                </li>
-              ))}
-            </ul>
-            {variant.warnings.length ? (
-              <ul className="warning-list">
-                {variant.warnings.slice(0, 2).map((warning) => (
-                  <li key={`${variant.name}-${warning}`}>{warning}</li>
+            {variant.roomNotes[0] ? (
+              <p className="variant-room-highlight">
+                <strong>{variant.roomNotes[0].summary}</strong>
+                <span>{variant.roomNotes[0].changes.slice(0, 2).join(", ")}</span>
+              </p>
+            ) : null}
+            <details className="variant-details">
+              <summary>Room notes and cautions</summary>
+              <ul className="compact-list">
+                {variant.roomNotes.slice(0, 4).map((note) => (
+                  <li key={`${variant.name}-${note.roomId}`}>
+                    <strong>{note.summary}</strong>
+                    <span>{note.changes.slice(0, 2).join(", ")}</span>
+                  </li>
                 ))}
               </ul>
-            ) : null}
+              {variant.warnings.length ? (
+                <ul className="warning-list">
+                  {variant.warnings.slice(0, 2).map((warning) => (
+                    <li key={`${variant.name}-${warning}`}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </details>
           </article>
         ))}
       </section>
     </div>
   );
+}
+
+function isVisibleVariant(variant: DesignVariantSchema) {
+  return variant.name !== "Rental Staging";
+}
+
+function summarizeText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1).trim()}...`;
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {

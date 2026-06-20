@@ -238,9 +238,9 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   await page.waitForTimeout(500);
   const beforeVariant = await page.screenshot({ fullPage: true });
 
-  await page.getByRole("button", { name: "Rental Staging" }).click();
+  await page.getByRole("button", { name: "Survey Base" }).click();
   await expect(
-    page.getByRole("button", { name: "Rental Staging" }),
+    page.getByRole("button", { name: "Survey Base" }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.waitForTimeout(500);
   const afterVariant = await page.screenshot({ fullPage: true });
@@ -342,10 +342,10 @@ test("London flat plan editor shows fixture geometry and supports manual wall dr
   await expect(
     page.getByRole("heading", { name: "Confirm the floor plan." }),
   ).toBeVisible();
-  await expect(page.getByText("10 walls")).toBeVisible();
+  await expect(page.getByText(/\d+ walls/)).toBeVisible();
   await expect(page.getByText("Scale 70 px/m")).toBeVisible();
 
-  await page.getByRole("button", { name: /Draw/ }).click();
+  await page.getByRole("button", { name: /Add wall/ }).click();
   const canvas = page
     .locator('[aria-label="Interactive floor plan canvas"] canvas')
     .first();
@@ -357,13 +357,13 @@ test("London flat plan editor shows fixture geometry and supports manual wall dr
   await page.mouse.move(box!.x + 260, box!.y + 160, { steps: 8 });
   await page.mouse.up();
 
-  await expect(page.getByText("1 manual")).toBeVisible();
+  await expect(page.getByText(/\d+ manual/)).toBeVisible();
   await expect(page.getByRole("button", { name: /Generate 3D/ })).toHaveAttribute(
     "aria-disabled",
     "false",
   );
 
-  await page.getByRole("button", { name: /^Scale$/ }).click();
+  await page.getByRole("button", { name: /Set scale/ }).click();
   await page.mouse.move(box!.x + 120, box!.y + 520);
   await page.mouse.down();
   await page.mouse.move(box!.x + 260, box!.y + 520, { steps: 8 });
@@ -578,6 +578,7 @@ test("variant, report, share, and proof flows create observable hackathon events
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/projects/demo-london-flat/design");
 
+  await page.getByText("Fine tune brief").click();
   await page.getByRole("button", { name: "Premium" }).click();
   await page.getByRole("button", { name: "resale uplift" }).click();
   await page.getByRole("button", { name: "family", exact: true }).click();

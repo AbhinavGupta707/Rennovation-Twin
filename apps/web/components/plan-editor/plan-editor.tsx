@@ -74,6 +74,27 @@ const MANUAL_WALL_STROKE = "#1967d2";
 const SELECTED_WALL_STROKE = "#b87745";
 const SCALE_LINE_STROKE = "#7c3aed";
 
+function getModeGuidance(mode: EditorMode) {
+  switch (mode) {
+    case "draw":
+      return {
+        title: "Add wall mode",
+        body: "Draws a blue manual wall. Saved walls are used when Generate 3D builds the model.",
+      };
+    case "scale":
+      return {
+        title: "Set scale mode",
+        body: "Draws a purple reference line. Calibrating it changes the metres conversion for the full 3D model.",
+      };
+    case "select":
+    default:
+      return {
+        title: "Select/edit mode",
+        body: "Select walls, drag endpoints, add openings, or adjust room labels before saving.",
+      };
+  }
+}
+
 function useMeasuredWidth<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   const [width, setWidth] = useState(MAX_STAGE_WIDTH);
@@ -160,6 +181,46 @@ function newManualWall(start: Vec2, end: Vec2, index: number): EditableWall {
   };
 }
 
+function getWallSource(wall: Wall): EditableWall["source"] {
+  return wall.id.startsWith("manual-wall-") ? "manual" : "fixture";
+}
+
+function getNextManualWallIndex(walls: Wall[]) {
+  const manualIndexes = walls
+    .map((wall) => wall.id.match(/^manual-wall-(\d+)$/)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+
+  return manualIndexes.length ? Math.max(...manualIndexes) + 1 : 1;
+}
+
+function createEditableWalls(walls: Wall[]): EditableWall[] {
+  const usedIds = new Set<string>();
+  let nextManualIndex = getNextManualWallIndex(walls);
+
+  return walls.map((wall, index) => {
+    let id = wall.id;
+
+    if (usedIds.has(id)) {
+      if (id.startsWith("manual-wall-")) {
+        id = `manual-wall-${nextManualIndex}`;
+        nextManualIndex += 1;
+      } else {
+        id = `${id}-copy-${index + 1}`;
+      }
+    }
+
+    usedIds.add(id);
+
+    return {
+      ...wall,
+      id,
+      source: getWallSource({ ...wall, id }),
+    };
+  });
+}
+
 function getWallBounds(
   walls: Wall[],
   imageWidth: number,
@@ -201,11 +262,8 @@ export function PlanEditor({
   const { ref: viewportRef, width: stageWidth } =
     useMeasuredWidth<HTMLDivElement>();
   const manualEditTrackedRef = useRef(false);
-  const [walls, setWalls] = useState<EditableWall[]>(
-    plan.walls.map((wall) => ({
-      ...wall,
-      source: "fixture",
-    })),
+  const [walls, setWalls] = useState<EditableWall[]>(() =>
+    createEditableWalls(plan.walls),
   );
   const [mode, setMode] = useState<EditorMode>("select");
   const [selectedWallId, setSelectedWallId] = useState(plan.walls[0]?.id ?? "");
@@ -246,6 +304,7 @@ export function PlanEditor({
   const hasEnoughWalls = walls.length >= 4;
   const isPlanValid = hasScale && hasEnoughWalls;
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
+  const modeGuidance = getModeGuidance(mode);
   const wallMap = useMemo(
     () => new Map(walls.map((wall) => [wall.id, wall])),
     [walls],
@@ -530,23 +589,28 @@ export function PlanEditor({
               Confirm the floor plan.
             </h1>
           </div>
-          <button
-            className="button button-primary"
-            type="button"
-            disabled={!isPlanValid || saveState === "saving"}
-            aria-disabled={!isPlanValid}
-            aria-busy={saveState === "saving"}
-            onClick={() => {
-              void savePlan({ navigate: true });
-            }}
-          >
-            {saveState === "saving" ? (
-              <Loader2 className="spin-icon" size={18} aria-hidden="true" />
-            ) : (
-              <ArrowRight size={18} aria-hidden="true" />
-            )}
-            {saveState === "saving" ? "Building 3D model..." : "Generate 3D"}
-          </button>
+          <div className="grid justify-items-end gap-1">
+            <button
+              className="button button-primary"
+              type="button"
+              disabled={!isPlanValid || saveState === "saving"}
+              aria-disabled={!isPlanValid}
+              aria-busy={saveState === "saving"}
+              onClick={() => {
+                void savePlan({ navigate: true });
+              }}
+            >
+              {saveState === "saving" ? (
+                <Loader2 className="spin-icon" size={18} aria-hidden="true" />
+              ) : (
+                <ArrowRight size={18} aria-hidden="true" />
+              )}
+              {saveState === "saving" ? "Building 3D model..." : "Generate 3D"}
+            </button>
+            <span className="text-right text-xs font-bold text-[#66736e]">
+              Saves these edits before opening the model.
+            </span>
+          </div>
         </div>
 
         <div className="grid gap-4 p-4">
@@ -628,7 +692,7 @@ export function PlanEditor({
                   const wall = newManualWall(
                     draftStart,
                     draftEnd,
-                    manualWallCount + 1,
+                    getNextManualWallIndex(walls),
                   );
                   trackManualEditOnce();
                   setWalls((currentWalls) => [...currentWalls, wall]);
@@ -901,14 +965,14 @@ export function PlanEditor({
 
       <aside className="grid content-start gap-4">
         <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
-          <h2 className="m-0 text-base font-black">Trace controls</h2>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <h2 className="m-0 text-base font-black">Plan tools</h2>
+          <div className="mt-3 grid grid-cols-1 gap-2">
             <button
               className={`button ${mode === "select" ? "button-primary" : "button-secondary"}`}
               type="button"
               onClick={() => setMode("select")}
             >
-              <MousePointer2 size={18} aria-hidden="true" /> Select
+              <MousePointer2 size={18} aria-hidden="true" /> Edit
             </button>
             <button
               className={`button ${mode === "draw" ? "button-primary" : "button-secondary"}`}
@@ -920,7 +984,7 @@ export function PlanEditor({
                 setDraftEnd(null);
               }}
             >
-              <PencilLine size={18} aria-hidden="true" /> Draw
+              <PencilLine size={18} aria-hidden="true" /> Add wall
             </button>
             <button
               className={`button ${mode === "scale" ? "button-primary" : "button-secondary"}`}
@@ -931,8 +995,16 @@ export function PlanEditor({
                 setDraftEnd(null);
               }}
             >
-              <Ruler size={18} aria-hidden="true" /> Scale
+              <Ruler size={18} aria-hidden="true" /> Set scale
             </button>
+          </div>
+          <div className="mt-3 rounded-lg border border-[#d7dfd7] bg-[#f6f8f5] p-3">
+            <strong className="block text-sm text-[#14201c]">
+              {modeGuidance.title}
+            </strong>
+            <p className="m-0 mt-1 text-sm leading-6 text-[#66736e]">
+              {modeGuidance.body}
+            </p>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
@@ -952,10 +1024,6 @@ export function PlanEditor({
               <Redo2 size={18} aria-hidden="true" /> Redo
             </button>
           </div>
-          <p className="mt-3 text-sm leading-6 text-[#66736e]">
-            Draw mode snaps to nearby endpoints and straight axes. Scale mode
-            draws the calibration reference.
-          </p>
         </section>
 
         <section className="rounded-lg border border-[rgba(20,32,28,0.12)] bg-white p-4">
@@ -963,8 +1031,8 @@ export function PlanEditor({
             <DoorOpen size={18} aria-hidden="true" /> Openings
           </h2>
           <p className="mt-3 text-sm leading-6 text-[#66736e]">
-            Add an opening to the selected wall at its midpoint, then refine in
-            the saved plan as needed.
+            Select a wall, then add a door or window marker. Doors can become
+            walkthrough prompts in the 3D model.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
@@ -990,6 +1058,10 @@ export function PlanEditor({
           <h2 className="m-0 flex items-center gap-2 text-base font-black">
             <Ruler size={18} aria-hidden="true" /> Scale
           </h2>
+          <p className="mt-3 text-sm leading-6 text-[#66736e]">
+            Scale changes the metres conversion for walls, rooms, furniture, and
+            camera movement.
+          </p>
           <label className="mt-3 grid gap-2 text-sm font-bold text-[#14201c]">
             Pixels per metre
             <input

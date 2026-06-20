@@ -29,11 +29,15 @@ export default async function ModelPage({
     }
   }
 
+  const visibleVariantCount =
+    project.variants.filter((candidate) => candidate.name !== "Rental Staging")
+      .length + 1;
+
   return (
     <ProjectShell projectId={projectId} current="model">
       <div className="stage-toolbar">
         <span className="status-pill">Interactive model ready</span>
-        <span>{project.variants.length} variants</span>
+        <span>{visibleVariantCount} variants</span>
       </div>
       <div className="stage-body model-stage-body">
         <div className="model-header">
