@@ -1,5 +1,6 @@
 import { DesignVariantSchemaZ } from "@renovation-twin/types";
 import { Events, trackEvent } from "@renovation-twin/events";
+import { pendoTrackServer } from "../../../../../lib/server/pendo-track";
 import {
   createFallbackVariantForPlan,
   runJsonModel,
@@ -51,6 +52,15 @@ export async function POST(
     },
     project.id,
   );
+  pendoTrackServer(Events.VariantPromptSubmitted, {
+    projectId,
+    stylePreset,
+    promptLength: prompt.length,
+    budgetLevel: intent.budgetLevel,
+    useIntent: intent.useIntent,
+    householdType: intent.householdType,
+    roomPriorityCount: intent.roomPriorities.length,
+  }, project.id);
 
   let variant;
   let provider: "fireworks" | "fallback" = "fireworks";
