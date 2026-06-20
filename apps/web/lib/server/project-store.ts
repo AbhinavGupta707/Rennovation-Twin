@@ -195,7 +195,10 @@ type PrismaStoreClient = {
     deleteMany(args?: unknown): Promise<unknown>;
     createMany(args: unknown): Promise<unknown>;
   };
-  $transaction<T>(fn: (client: PrismaStoreClient) => Promise<T>): Promise<T>;
+  $transaction<T>(
+    fn: (client: PrismaStoreClient) => Promise<T>,
+    options?: { maxWait?: number; timeout?: number },
+  ): Promise<T>;
 };
 
 class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
@@ -233,35 +236,38 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
     const client = await getPrismaStoreClient();
     const projects = [...store.projects.values()];
 
-    await client.$transaction(async (transaction) => {
-      for (const project of projects) {
-        await transaction.project.upsert({
-          where: { id: project.id },
-          update: toPrismaProjectUpdate(project),
-          create: {
-            id: project.id,
-            createdAt: new Date(project.createdAt),
-            ...toPrismaProjectUpdate(project),
-          },
-        });
-      }
+    await client.$transaction(
+      async (transaction) => {
+        for (const project of projects) {
+          await transaction.project.upsert({
+            where: { id: project.id },
+            update: toPrismaProjectUpdate(project),
+            create: {
+              id: project.id,
+              createdAt: new Date(project.createdAt),
+              ...toPrismaProjectUpdate(project),
+            },
+          });
+        }
 
-      await transaction.eventLog.deleteMany();
+        await transaction.eventLog.deleteMany();
 
-      if (store.events.length) {
-        await transaction.eventLog.createMany({
-          data: store.events.map((event) => ({
-            name: event.name,
-            projectId:
-              event.projectId && store.projects.has(event.projectId)
-                ? event.projectId
-                : null,
-            props: event.props ?? {},
-            createdAt: new Date(event.createdAt),
-          })),
-        });
-      }
-    });
+        if (store.events.length) {
+          await transaction.eventLog.createMany({
+            data: store.events.map((event) => ({
+              name: event.name,
+              projectId:
+                event.projectId && store.projects.has(event.projectId)
+                  ? event.projectId
+                  : null,
+              props: event.props ?? {},
+              createdAt: new Date(event.createdAt),
+            })),
+          });
+        }
+      },
+      { maxWait: 10_000, timeout: 15_000 },
+    );
   }
 }
 
@@ -607,15 +613,17 @@ export async function markModelGenerated(
 ): Promise<ProjectRecord> {
   const store = await getStore();
   const project = await ensureProject(projectId, store);
-
-  if (
+  const shouldMarkGenerated =
     project.status === "PLAN_CONFIRMED" ||
     project.status === "PARSED" ||
-    project.status === "UPLOADED"
-  ) {
-    project.status = "MODEL_GENERATED";
-    project.updatedAt = new Date().toISOString();
+    project.status === "UPLOADED";
+
+  if (!shouldMarkGenerated) {
+    return project;
   }
+
+  project.status = "MODEL_GENERATED";
+  project.updatedAt = new Date().toISOString();
 
   recordEventInStore(
     store,

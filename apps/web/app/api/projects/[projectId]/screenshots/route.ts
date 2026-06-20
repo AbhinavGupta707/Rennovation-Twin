@@ -2,6 +2,10 @@ import { saveProjectScreenshot } from "../../../../../lib/server/project-store";
 import { jsonFail, jsonOk } from "../../../../../lib/server/api-response";
 
 const MAX_SCREENSHOT_BYTES = 5_000_000;
+const VALID_SCREENSHOT_PREFIXES = [
+  "data:image/png;base64,",
+  "data:image/jpeg;base64,",
+];
 
 export async function POST(
   request: Request,
@@ -14,10 +18,15 @@ export async function POST(
     cameraPreset?: string;
   } | null;
 
-  if (!body?.imageDataUrl?.startsWith("data:image/png;base64,")) {
+  if (
+    !body?.imageDataUrl ||
+    !VALID_SCREENSHOT_PREFIXES.some((prefix) =>
+      body.imageDataUrl!.startsWith(prefix),
+    )
+  ) {
     return jsonFail(
       "invalid_screenshot",
-      "Screenshot must be a PNG data URL captured from the 3D canvas.",
+      "Screenshot must be an image data URL captured from the 3D canvas.",
       422,
     );
   }

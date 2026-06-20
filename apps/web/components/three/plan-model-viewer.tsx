@@ -2,12 +2,13 @@
 
 import {
   type ElementRef,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { Canvas, type RootState, useThree } from "@react-three/fiber";
+import { Canvas, type RootState, useFrame, useThree } from "@react-three/fiber";
 import {
   Environment,
   Html,
@@ -54,6 +55,7 @@ type CameraPreset = {
   target: [number, number, number];
   fov: number;
   controls: "orbit" | "standing";
+  bounds?: MovementBounds;
 };
 
 export function PlanModelViewer({
@@ -146,7 +148,7 @@ export function PlanModelViewer({
     setCaptureMessage("Capturing the current 3D view...");
 
     try {
-      const imageDataUrl = canvasRef.current.toDataURL("image/png");
+      const imageDataUrl = canvasRef.current.toDataURL("image/jpeg", 0.76);
       const payload = await postJson<{
         screenshot: { id: string; createdAt: string };
       }>(`/api/projects/${projectId}/screenshots`, {
@@ -175,6 +177,7 @@ export function PlanModelViewer({
               type="button"
               className="variant-tab"
               aria-pressed={variant.name === activeVariant.name}
+              title={getVariantTitle(variant)}
               onClick={() => {
                 setActiveVariantName(variant.name);
                 updateVariantUrl(variant.name);
@@ -228,7 +231,7 @@ export function PlanModelViewer({
           ) : (
             <Play size={16} aria-hidden="true" />
           )}
-          Guided tour
+          Auto tour
         </button>
         {!readOnly && projectId ? (
           <button
@@ -254,6 +257,7 @@ export function PlanModelViewer({
       <div className="model-canvas-shell">
         <Canvas
           shadows
+          tabIndex={0}
           dpr={[1, 1.75]}
           gl={{ preserveDrawingBuffer: true }}
           onCreated={({ gl }) => {
@@ -333,24 +337,72 @@ function OrbitCameraControls({ preset }: { preset: CameraPreset }) {
 function StandingLookControls({ preset }: { preset: CameraPreset }) {
   const { camera, gl } = useThree();
   const orientationRef = useRef(getStandingOrientation(preset));
+  const positionRef = useRef<[number, number, number]>(preset.position);
   const pointerRef = useRef<{
     pointerId: number;
     x: number;
     y: number;
   } | null>(null);
+  const keysRef = useRef(new Set<string>());
+
+  const moveCamera = useCallback(
+    (forwardMeters: number, rightMeters: number) => {
+      if (!forwardMeters && !rightMeters) {
+        return;
+      }
+
+      const orientation = orientationRef.current;
+      const position = positionRef.current;
+      const nextPosition = clampPositionToBounds(
+        [
+          position[0] +
+            Math.sin(orientation.yaw) * forwardMeters +
+            Math.cos(orientation.yaw) * rightMeters,
+          position[1],
+          position[2] +
+            Math.cos(orientation.yaw) * forwardMeters -
+            Math.sin(orientation.yaw) * rightMeters,
+        ],
+        preset.bounds,
+      );
+
+      positionRef.current = nextPosition;
+      camera.position.set(...nextPosition);
+      applyStandingLook(camera, nextPosition, orientation);
+    },
+    [camera, preset.bounds],
+  );
 
   useEffect(() => {
     const orientation = getStandingOrientation(preset);
+    const position = clampPositionToBounds(preset.position, preset.bounds);
+
     orientationRef.current = orientation;
-    camera.position.set(...preset.position);
-    applyStandingLook(camera, preset.position, orientation);
+    positionRef.current = position;
+    camera.position.set(...position);
+    applyStandingLook(camera, position, orientation);
   }, [camera, preset]);
+
+  useFrame((_, delta) => {
+    const keys = keysRef.current;
+    const speed = 1.35;
+    const step = Math.min(delta, 0.05) * speed;
+    const forward =
+      (keys.has("w") || keys.has("arrowup") ? step : 0) -
+      (keys.has("s") || keys.has("arrowdown") ? step : 0);
+    const right =
+      (keys.has("d") || keys.has("arrowright") ? step : 0) -
+      (keys.has("a") || keys.has("arrowleft") ? step : 0);
+
+    moveCamera(forward, right);
+  });
 
   useEffect(() => {
     const element = gl.domElement;
 
     function onPointerDown(event: PointerEvent) {
       event.preventDefault();
+      element.focus();
       pointerRef.current = {
         pointerId: event.pointerId,
         x: event.clientX,
@@ -379,8 +431,8 @@ function StandingLookControls({ preset }: { preset: CameraPreset }) {
         x: event.clientX,
         y: event.clientY,
       };
-      camera.position.set(...preset.position);
-      applyStandingLook(camera, preset.position, nextOrientation);
+      camera.position.set(...positionRef.current);
+      applyStandingLook(camera, positionRef.current, nextOrientation);
     }
 
     function onPointerUp(event: PointerEvent) {
@@ -396,6 +448,29 @@ function StandingLookControls({ preset }: { preset: CameraPreset }) {
 
     function onWheel(event: WheelEvent) {
       event.preventDefault();
+      moveCamera(Math.min(Math.max(-event.deltaY * 0.003, -0.42), 0.42), 0);
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+      const key = event.key.toLowerCase();
+
+      if (isMovementKey(key)) {
+        event.preventDefault();
+        keysRef.current.add(key);
+      }
+    }
+
+    function onKeyUp(event: KeyboardEvent) {
+      const key = event.key.toLowerCase();
+
+      if (isMovementKey(key)) {
+        event.preventDefault();
+        keysRef.current.delete(key);
+      }
+    }
+
+    function onBlur() {
+      keysRef.current.clear();
     }
 
     element.addEventListener("pointerdown", onPointerDown);
@@ -403,6 +478,9 @@ function StandingLookControls({ preset }: { preset: CameraPreset }) {
     element.addEventListener("pointerup", onPointerUp);
     element.addEventListener("pointercancel", onPointerUp);
     element.addEventListener("wheel", onWheel, { passive: false });
+    element.addEventListener("keydown", onKeyDown);
+    element.addEventListener("keyup", onKeyUp);
+    element.addEventListener("blur", onBlur);
 
     return () => {
       element.removeEventListener("pointerdown", onPointerDown);
@@ -410,8 +488,11 @@ function StandingLookControls({ preset }: { preset: CameraPreset }) {
       element.removeEventListener("pointerup", onPointerUp);
       element.removeEventListener("pointercancel", onPointerUp);
       element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("keydown", onKeyDown);
+      element.removeEventListener("keyup", onKeyUp);
+      element.removeEventListener("blur", onBlur);
     };
-  }, [camera, gl, preset]);
+  }, [camera, gl, moveCamera, preset]);
 
   return null;
 }
@@ -449,6 +530,34 @@ function applyStandingLook(
 
 function clampPitch(value: number) {
   return Math.min(Math.max(value, -0.72), 0.52);
+}
+
+function isMovementKey(key: string) {
+  return [
+    "w",
+    "a",
+    "s",
+    "d",
+    "arrowup",
+    "arrowleft",
+    "arrowdown",
+    "arrowright",
+  ].includes(key);
+}
+
+function clampPositionToBounds(
+  position: [number, number, number],
+  bounds?: MovementBounds,
+): [number, number, number] {
+  if (!bounds) {
+    return position;
+  }
+
+  return [
+    Math.min(Math.max(position[0], bounds.minX), bounds.maxX),
+    position[1],
+    Math.min(Math.max(position[2], bounds.minZ), bounds.maxZ),
+  ];
 }
 
 function PlanScene({
@@ -697,6 +806,13 @@ type RoomCameraBounds = {
   depth: number;
 };
 
+type MovementBounds = {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+};
+
 function getRoomCameraBounds(plan: PlanSchema): RoomCameraBounds[] {
   return plan.rooms
     .map((room) => {
@@ -774,6 +890,7 @@ function createRoomCameraPreset({
     target: [targetPoint.x, 1.32, targetPoint.z],
     fov: 64,
     controls: "standing",
+    bounds: getMovementBounds(room),
   };
 }
 
@@ -825,11 +942,38 @@ function createWalkthroughPreset(
     target: [targetPoint.x, 1.34, targetPoint.z],
     fov: 68,
     controls: "standing",
+    bounds: getMovementBounds(targetRoom),
   };
 }
 
 function getRoomInset(room: RoomCameraBounds) {
   return Math.min(Math.max(Math.min(room.width, room.depth) * 0.18, 0.45), 0.85);
+}
+
+function getMovementBounds(room: RoomCameraBounds): MovementBounds {
+  const inset = Math.min(
+    Math.max(Math.min(room.width, room.depth) * 0.14, 0.32),
+    0.72,
+  );
+
+  if (
+    room.minX + inset > room.maxX - inset ||
+    room.minZ + inset > room.maxZ - inset
+  ) {
+    return {
+      minX: room.center.x,
+      maxX: room.center.x,
+      minZ: room.center.z,
+      maxZ: room.center.z,
+    };
+  }
+
+  return {
+    minX: room.minX + inset,
+    maxX: room.maxX - inset,
+    minZ: room.minZ + inset,
+    maxZ: room.maxZ - inset,
+  };
 }
 
 function findRoomBounds(rooms: RoomCameraBounds[], pattern: RegExp) {
@@ -902,11 +1046,34 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const payload = (await response.json()) as ApiResponse<T>;
+  const text = await response.text();
+  let payload: ApiResponse<T>;
+
+  try {
+    payload = JSON.parse(text) as ApiResponse<T>;
+  } catch {
+    if (!response.ok) {
+      throw new Error(
+        response.status === 413
+          ? "Screenshot is too large for this deployment. Try a closer crop or lower browser zoom."
+          : `Request failed with status ${response.status}.`,
+      );
+    }
+
+    throw new Error("The server returned an empty response.");
+  }
 
   if (!payload.ok) {
     throw new Error(payload.error.message);
   }
 
   return payload.data;
+}
+
+function getVariantTitle(variant: DesignVariantSchema) {
+  if (variant.name === "Survey Base") {
+    return "Unstyled plan geometry generated from the floor plan.";
+  }
+
+  return `${variant.style || variant.name} design variant.`;
 }

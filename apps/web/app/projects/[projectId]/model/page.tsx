@@ -21,10 +21,12 @@ export default async function ModelPage({
   const sourceProject = await getProjectOrDemo(projectId);
   let project = sourceProject;
 
-  try {
-    project = await markModelGenerated(sourceProject.id);
-  } catch (error) {
-    console.error("Model visit tracking failed", error);
+  if (shouldMarkModelGenerated(sourceProject.status)) {
+    try {
+      project = await markModelGenerated(sourceProject.id);
+    } catch (error) {
+      console.error("Model generation status update failed", error);
+    }
   }
 
   return (
@@ -60,5 +62,13 @@ export default async function ModelPage({
         </div>
       </div>
     </ProjectShell>
+  );
+}
+
+function shouldMarkModelGenerated(status: string) {
+  return (
+    status === "PLAN_CONFIRMED" ||
+    status === "PARSED" ||
+    status === "UPLOADED"
   );
 }

@@ -277,6 +277,17 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   const draggedLivingStats = await webglCanvasStats(page);
   expect(draggedLivingStats.colorBuckets).toBeGreaterThan(6);
 
+  const beforeRoomMove = await page.screenshot({ fullPage: true });
+  await page.mouse.wheel(0, -220);
+  await page.keyboard.down("w");
+  await page.waitForTimeout(400);
+  await page.keyboard.up("w");
+  await page.waitForTimeout(500);
+  const afterRoomMove = await page.screenshot({ fullPage: true });
+  expect(byteDiff(beforeRoomMove, afterRoomMove)).toBeGreaterThan(500);
+  const movedLivingStats = await webglCanvasStats(page);
+  expect(movedLivingStats.colorBuckets).toBeGreaterThan(6);
+
   await page.getByRole("button", { name: /Bedroom \/ office/ }).click();
   await expect(
     page.getByRole("button", { name: /Bedroom \/ office/ }),
@@ -296,9 +307,9 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   const walkthroughStats = await webglCanvasStats(page);
   expect(walkthroughStats.colorBuckets).toBeGreaterThan(6);
 
-  await page.getByRole("button", { name: /Guided tour/ }).click();
+  await page.getByRole("button", { name: /Auto tour/ }).click();
   await expect(
-    page.getByRole("button", { name: /Guided tour/ }),
+    page.getByRole("button", { name: /Auto tour/ }),
   ).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: /Capture view/ }).click();

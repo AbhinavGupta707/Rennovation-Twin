@@ -1,4 +1,9 @@
+"use client";
+
 import Link from "next/link";
+import { useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
+import { Loader2 } from "lucide-react";
 
 const steps = [
   ["Upload", "upload"],
@@ -16,8 +21,14 @@ export function ProjectShell({
 }: {
   projectId: string;
   current: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
+  const pathname = usePathname();
+  const [pendingStep, setPendingStep] = useState<string | null>(null);
+  const pendingHref = pendingStep ? `/projects/${projectId}/${pendingStep}` : null;
+  const visiblePendingStep = pendingHref === pathname ? null : pendingStep;
+  const pendingLabel = steps.find(([, step]) => step === visiblePendingStep)?.[0];
+
   return (
     <section className="page-band">
       <div className="container workflow">
@@ -27,12 +38,29 @@ export function ProjectShell({
               key={step}
               href={`/projects/${projectId}/${step}`}
               aria-current={current === step ? "page" : undefined}
+              aria-busy={visiblePendingStep === step ? "true" : undefined}
+              onClick={() => {
+                if (current !== step) {
+                  setPendingStep(step);
+                }
+              }}
             >
-              {label}
+              <span>{label}</span>
+              {visiblePendingStep === step ? (
+                <Loader2 className="spin-icon" size={15} aria-hidden="true" />
+              ) : null}
             </Link>
           ))}
         </aside>
-        <div className="stage">{children}</div>
+        <div className="stage">
+          {pendingLabel ? (
+            <div className="stage-loading" role="status">
+              <Loader2 className="spin-icon" size={18} aria-hidden="true" />
+              Opening {pendingLabel}
+            </div>
+          ) : null}
+          {children}
+        </div>
       </div>
     </section>
   );
