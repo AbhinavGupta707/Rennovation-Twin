@@ -15,7 +15,16 @@ import {
   OrbitControls,
   PerspectiveCamera,
 } from "@react-three/drei";
-import { Camera, Pause, Play, ScanSearch } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Camera,
+  Pause,
+  Play,
+  RotateCcw,
+  RotateCw,
+  ScanSearch,
+} from "lucide-react";
 import type {
   ApiResponse,
   DesignVariantSchema,
@@ -58,6 +67,13 @@ type CameraPreset = {
   bounds?: MovementBounds;
 };
 
+type NavigationIntent = "forward" | "backward" | "turn-left" | "turn-right";
+
+type NavigationCommand = {
+  id: number;
+  intent: NavigationIntent;
+};
+
 export function PlanModelViewer({
   projectId,
   plan,
@@ -82,7 +98,12 @@ export function PlanModelViewer({
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
+  const [navigationIntent, setNavigationIntent] =
+    useState<NavigationIntent | null>(null);
+  const [navigationCommand, setNavigationCommand] =
+    useState<NavigationCommand | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const navigationCommandIdRef = useRef(0);
   const trackedViewRef = useRef(false);
   const activeVariant = allVariants.find((variant) => variant.name === activeVariantName) ?? allVariants[0]!;
   const furniture =
@@ -165,6 +186,20 @@ export function PlanModelViewer({
         error instanceof Error ? error.message : "Could not capture screenshot.",
       );
     }
+  }
+
+  function startNavigation(intent: NavigationIntent) {
+    navigationCommandIdRef.current += 1;
+    setNavigationCommand({
+      id: navigationCommandIdRef.current,
+      intent,
+    });
+    setNavigationIntent(intent);
+    canvasRef.current?.focus();
+  }
+
+  function stopNavigation() {
+    setNavigationIntent(null);
   }
 
   return (
@@ -254,6 +289,13 @@ export function PlanModelViewer({
         </p>
       ) : null}
 
+      {activeCameraPreset.controls === "standing" ? (
+        <RoomMovementControls
+          onStart={startNavigation}
+          onStop={stopNavigation}
+        />
+      ) : null}
+
       <div className="model-canvas-shell">
         <Canvas
           shadows
@@ -286,7 +328,11 @@ export function PlanModelViewer({
             furniture={furniture}
             showRoomLabels={showRoomLabels}
           />
-          <CameraControlsRig preset={activeCameraPreset} />
+          <CameraControlsRig
+            navigationCommand={navigationCommand}
+            navigationIntent={navigationIntent}
+            preset={activeCameraPreset}
+          />
           <Environment preset="apartment" />
         </Canvas>
       </div>
@@ -301,9 +347,83 @@ export function PlanModelViewer({
   );
 }
 
-function CameraControlsRig({ preset }: { preset: CameraPreset }) {
+function RoomMovementControls({
+  onStart,
+  onStop,
+}: {
+  onStart: (intent: NavigationIntent) => void;
+  onStop: () => void;
+}) {
+  const controls = [
+    {
+      intent: "turn-left" as const,
+      label: "Turn left",
+      icon: <RotateCcw size={18} aria-hidden="true" />,
+    },
+    {
+      intent: "forward" as const,
+      label: "Move forward",
+      icon: <ArrowUp size={18} aria-hidden="true" />,
+    },
+    {
+      intent: "turn-right" as const,
+      label: "Turn right",
+      icon: <RotateCw size={18} aria-hidden="true" />,
+    },
+    {
+      intent: "backward" as const,
+      label: "Move back",
+      icon: <ArrowDown size={18} aria-hidden="true" />,
+    },
+  ];
+
+  return (
+    <div className="walk-controls" aria-label="Room movement controls">
+      {controls.map((control) => (
+        <button
+          key={control.intent}
+          type="button"
+          className={`walk-control-button walk-control-${control.intent}`}
+          title={control.label}
+          aria-label={control.label}
+          onBlur={onStop}
+          onClick={() => {
+            onStart(control.intent);
+            window.setTimeout(onStop, 90);
+          }}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerCancel={onStop}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            onStart(control.intent);
+          }}
+          onPointerLeave={onStop}
+          onPointerUp={onStop}
+        >
+          {control.icon}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function CameraControlsRig({
+  navigationCommand,
+  navigationIntent,
+  preset,
+}: {
+  navigationCommand: NavigationCommand | null;
+  navigationIntent: NavigationIntent | null;
+  preset: CameraPreset;
+}) {
   if (preset.controls === "standing") {
-    return <StandingLookControls preset={preset} />;
+    return (
+      <StandingLookControls
+        navigationCommand={navigationCommand}
+        navigationIntent={navigationIntent}
+        preset={preset}
+      />
+    );
   }
 
   return <OrbitCameraControls preset={preset} />;
@@ -334,10 +454,19 @@ function OrbitCameraControls({ preset }: { preset: CameraPreset }) {
   );
 }
 
-function StandingLookControls({ preset }: { preset: CameraPreset }) {
+function StandingLookControls({
+  navigationCommand,
+  navigationIntent,
+  preset,
+}: {
+  navigationCommand: NavigationCommand | null;
+  navigationIntent: NavigationIntent | null;
+  preset: CameraPreset;
+}) {
   const { camera, gl } = useThree();
   const orientationRef = useRef(getStandingOrientation(preset));
   const positionRef = useRef<[number, number, number]>(preset.position);
+  const lastNavigationCommandIdRef = useRef(0);
   const pointerRef = useRef<{
     pointerId: number;
     x: number;
@@ -373,6 +502,24 @@ function StandingLookControls({ preset }: { preset: CameraPreset }) {
     [camera, preset.bounds],
   );
 
+  const turnCamera = useCallback(
+    (radians: number) => {
+      if (!radians) {
+        return;
+      }
+
+      const nextOrientation = {
+        ...orientationRef.current,
+        yaw: orientationRef.current.yaw + radians,
+      };
+
+      orientationRef.current = nextOrientation;
+      camera.position.set(...positionRef.current);
+      applyStandingLook(camera, positionRef.current, nextOrientation);
+    },
+    [camera],
+  );
+
   useEffect(() => {
     const orientation = getStandingOrientation(preset);
     const position = clampPositionToBounds(preset.position, preset.bounds);
@@ -383,18 +530,57 @@ function StandingLookControls({ preset }: { preset: CameraPreset }) {
     applyStandingLook(camera, position, orientation);
   }, [camera, preset]);
 
+  useEffect(() => {
+    if (
+      !navigationCommand ||
+      navigationCommand.id === lastNavigationCommandIdRef.current
+    ) {
+      return;
+    }
+
+    lastNavigationCommandIdRef.current = navigationCommand.id;
+
+    switch (navigationCommand.intent) {
+      case "forward":
+        moveCamera(0.34, 0);
+        break;
+      case "backward":
+        moveCamera(-0.34, 0);
+        break;
+      case "turn-left":
+        turnCamera(0.28);
+        break;
+      case "turn-right":
+        turnCamera(-0.28);
+        break;
+    }
+  }, [moveCamera, navigationCommand, turnCamera]);
+
   useFrame((_, delta) => {
     const keys = keysRef.current;
     const speed = 1.35;
+    const turnSpeed = 1.55;
     const step = Math.min(delta, 0.05) * speed;
+    const turnStep = Math.min(delta, 0.05) * turnSpeed;
     const forward =
-      (keys.has("w") || keys.has("arrowup") ? step : 0) -
-      (keys.has("s") || keys.has("arrowdown") ? step : 0);
+      (keys.has("w") || keys.has("arrowup") || navigationIntent === "forward"
+        ? step
+        : 0) -
+      (keys.has("s") || keys.has("arrowdown") || navigationIntent === "backward"
+        ? step
+        : 0);
     const right =
-      (keys.has("d") || keys.has("arrowright") ? step : 0) -
-      (keys.has("a") || keys.has("arrowleft") ? step : 0);
+      (keys.has("d") ? step : 0) - (keys.has("a") ? step : 0);
+    const turn =
+      (keys.has("arrowleft") || navigationIntent === "turn-left"
+        ? turnStep
+        : 0) -
+      (keys.has("arrowright") || navigationIntent === "turn-right"
+        ? turnStep
+        : 0);
 
     moveCamera(forward, right);
+    turnCamera(turn);
   });
 
   useEffect(() => {

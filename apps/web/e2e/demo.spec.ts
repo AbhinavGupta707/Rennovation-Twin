@@ -278,10 +278,10 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   expect(draggedLivingStats.colorBuckets).toBeGreaterThan(6);
 
   const beforeRoomMove = await page.screenshot({ fullPage: true });
-  await page.mouse.wheel(0, -220);
-  await page.keyboard.down("w");
-  await page.waitForTimeout(400);
-  await page.keyboard.up("w");
+  await expect(page.getByRole("button", { name: "Move forward" })).toBeVisible();
+  await page.getByRole("button", { name: "Turn right" }).click();
+  await page.waitForTimeout(300);
+  await page.getByRole("button", { name: "Move forward" }).click();
   await page.waitForTimeout(500);
   const afterRoomMove = await page.screenshot({ fullPage: true });
   expect(byteDiff(beforeRoomMove, afterRoomMove)).toBeGreaterThan(500);
