@@ -2,7 +2,8 @@ import {
   DesignVariantSchemaZ,
   type DesignVariantSchema,
 } from "@renovation-twin/types";
-import { Events, trackEvent } from "@renovation-twin/events";
+import { Events } from "@renovation-twin/events";
+import { pendoTrackServer } from "../../../../../lib/server/pendo-track";
 import {
   createFallbackVariantForPlan,
   runJsonModel,
@@ -10,6 +11,7 @@ import {
 } from "@renovation-twin/ai";
 import {
   getProjectOrDemo,
+  recordEvent,
   saveVariant,
 } from "../../../../../lib/server/project-store";
 import { jsonOk } from "../../../../../lib/server/api-response";
@@ -43,7 +45,7 @@ export async function POST(
     ),
   };
 
-  trackEvent(
+  await recordEvent(
     Events.VariantPromptSubmitted,
     {
       projectId,
@@ -57,6 +59,15 @@ export async function POST(
     },
     project.id,
   );
+  pendoTrackServer(Events.VariantPromptSubmitted, {
+    projectId,
+    stylePreset,
+    promptLength: prompt.length,
+    budgetLevel: intent.budgetLevel,
+    useIntent: intent.useIntent,
+    householdType: intent.householdType,
+    roomPriorityCount: intent.roomPriorities.length,
+  }, project.id);
 
   let variant;
   let provider: "fireworks" | "fallback" = "fireworks";

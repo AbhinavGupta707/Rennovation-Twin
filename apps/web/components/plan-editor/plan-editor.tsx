@@ -606,6 +606,10 @@ export function PlanEditor({
     }
 
     manualEditTrackedRef.current = true;
+    window.pendo?.track?.(Events.ManualEditStarted, {
+      projectId,
+      wallCount: walls.length,
+    });
     void fetch("/api/events", {
       method: "POST",
       headers: { "content-type": "application/json" },

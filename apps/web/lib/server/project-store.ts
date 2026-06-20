@@ -9,6 +9,7 @@ import {
   type EventProps,
   type TrackedEvent,
 } from "@renovation-twin/events";
+import { pendoTrackServer } from "./pendo-track";
 import type {
   DesignVariantSchema,
   PlanSchema,
@@ -477,6 +478,7 @@ export async function createProject({
     { hasPostcode: Boolean(project.postcode) },
     project.id,
   );
+  pendoTrackServer(Events.ProjectCreated, { hasPostcode: Boolean(project.postcode) }, project.id);
   await persistStore(store);
   return project;
 }
@@ -509,6 +511,13 @@ export async function attachUpload(
     },
     project.id,
   );
+  pendoTrackServer(Events.FloorplanUploaded, {
+    projectId,
+    mimeType: upload.mimeType,
+    sizeKb: Math.round(upload.sizeBytes / 1024),
+    imageWidth: upload.imageWidth,
+    imageHeight: upload.imageHeight,
+  }, project.id);
 
   if (upload.mimeType === "application/pdf") {
     recordEventInStore(
@@ -521,6 +530,11 @@ export async function attachUpload(
       },
       project.id,
     );
+    pendoTrackServer(Events.PdfRendered, {
+      projectId,
+      rendered: upload.previewKind === "pdf-rendered",
+      fallback: upload.previewKind !== "pdf-rendered",
+    }, project.id);
   }
 
   if (upload.mimeType === "image/svg+xml") {
@@ -574,6 +588,7 @@ export async function parsePlan(projectId: string): Promise<{
   const isDemo = project.id === "demo-london-flat";
 
   recordEventInStore(store, Events.PlanParseStarted, { projectId }, project.id);
+  pendoTrackServer(Events.PlanParseStarted, { projectId }, project.id);
 
   const response = isDemo
     ? createDemoParseResponse(project.plan)
@@ -603,6 +618,13 @@ export async function parsePlan(projectId: string): Promise<{
     },
     project.id,
   );
+  pendoTrackServer(Events.PlanParseCompleted, {
+    projectId,
+    wallCount: response.planProposal.walls.length,
+    roomCount: response.planProposal.rooms.length,
+    confidenceBand: confidenceBand(response.confidence),
+    usedFallback: response.confidence < 0.5,
+  }, project.id);
 
   await persistStore(store);
   return response;
@@ -626,6 +648,7 @@ export async function savePlan(
     { projectId, scalePxPerMeter: plan.scalePxPerMeter },
     project.id,
   );
+  pendoTrackServer(Events.ScaleConfirmed, { projectId, scalePxPerMeter: plan.scalePxPerMeter }, project.id);
   recordEventInStore(
     store,
     Events.PlanConfirmed,
@@ -637,6 +660,12 @@ export async function savePlan(
     },
     project.id,
   );
+  pendoTrackServer(Events.PlanConfirmed, {
+    projectId,
+    wallCount: plan.walls.length,
+    roomCount: plan.rooms.length,
+    openingCount: plan.openings.length,
+  }, project.id);
 
   await persistStore(store);
   return project;
@@ -701,6 +730,7 @@ export async function saveVariant(
     { projectId, style: variant.style, ...props },
     project.id,
   );
+  pendoTrackServer(Events.VariantGenerated, { projectId, style: variant.style, ...props }, project.id);
   await persistStore(store);
   return project;
 }
@@ -732,6 +762,11 @@ export async function markModelGenerated(
     },
     project.id,
   );
+  pendoTrackServer(Events.ModelGenerated, {
+    projectId,
+    wallCount: project.plan.walls.length,
+    roomCount: project.plan.rooms.length,
+  }, project.id);
 
   await persistStore(store);
   return project;
@@ -743,6 +778,7 @@ export async function markWalkthroughStarted(
   const store = await getStore();
   const project = await ensureProject(projectId, store);
   recordEventInStore(store, Events.WalkthroughStarted, { projectId }, project.id);
+  pendoTrackServer(Events.WalkthroughStarted, { projectId }, project.id);
   await persistStore(store);
   return project;
 }
@@ -764,6 +800,7 @@ export async function markReportExported(
     { projectId, variantCount: project.variants.length },
     project.id,
   );
+  pendoTrackServer(Events.ReportExported, { projectId, variantCount: project.variants.length }, project.id);
   await persistStore(store);
   return project;
 }
@@ -802,6 +839,7 @@ export async function createShare(projectId: string): Promise<{
   project.updatedAt = new Date().toISOString();
 
   recordEventInStore(store, Events.ShareCreated, { projectId }, project.id);
+  pendoTrackServer(Events.ShareCreated, { projectId }, project.id);
   await persistStore(store);
   return { project, shareToken: project.shareToken };
 }

@@ -647,6 +647,7 @@ test("variant, report, share, and proof flows create observable hackathon events
   ).toBeVisible();
 
   await page.goto("/novus-proof");
+  await expect(page.getByText("variant_prompt_submitted").first()).toBeVisible();
   await expect(page.getByText("variant_generated").first()).toBeVisible();
   await expect(page.getByText("report_exported").first()).toBeVisible();
   await expect(page.getByText("share_created").first()).toBeVisible();

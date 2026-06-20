@@ -196,6 +196,10 @@ export function PlanModelViewer({
     }
 
     trackedViewRef.current = true;
+    window.pendo?.track?.(Events.WalkthroughStarted, {
+      projectId,
+      cameraPreset: activeCameraPresetId,
+    });
     void postJson<{
       event: { name: string; createdAt: string };
     }>("/api/events", {
