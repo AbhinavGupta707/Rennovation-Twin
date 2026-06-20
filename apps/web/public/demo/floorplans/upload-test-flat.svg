@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="700" viewBox="0 0 980 700">
+  <rect width="980" height="700" fill="#fbfcfa"/>
+  <rect x="80" y="70" width="820" height="550" fill="none" stroke="#14201c" stroke-width="10"/>
+  <line x1="360" y1="70" x2="360" y2="330" stroke="#14201c" stroke-width="8"/>
+  <line x1="620" y1="70" x2="620" y2="330" stroke="#14201c" stroke-width="8"/>
+  <line x1="80" y1="330" x2="620" y2="330" stroke="#14201c" stroke-width="8"/>
+  <line x1="250" y1="330" x2="250" y2="620" stroke="#14201c" stroke-width="8"/>
+  <line x1="430" y1="330" x2="430" y2="620" stroke="#14201c" stroke-width="8"/>
+  <line x1="620" y1="330" x2="620" y2="620" stroke="#14201c" stroke-width="8"/>
+  <text x="185" y="205" fill="#53635d" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">Bedroom</text>
+  <text x="490" y="205" fill="#53635d" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">Office</text>
+  <text x="760" y="470" fill="#53635d" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">Living</text>
+  <text x="520" y="490" fill="#53635d" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">Kitchen</text>
+  <text x="165" y="490" fill="#53635d" font-family="Arial, sans-serif" font-size="22" text-anchor="middle">Bath</text>
+  <line x1="110" y1="650" x2="180" y2="650" stroke="#2c6fd6" stroke-width="5"/>
+  <text x="145" y="675" fill="#2c6fd6" font-family="Arial, sans-serif" font-size="16" text-anchor="middle">1m</text>
+</svg>

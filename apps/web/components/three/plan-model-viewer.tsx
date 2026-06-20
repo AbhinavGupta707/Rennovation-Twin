@@ -11,7 +11,6 @@ import {
 import { Canvas, type RootState, useFrame, useThree } from "@react-three/fiber";
 import {
   Environment,
-  Html,
   OrbitControls,
   PerspectiveCamera,
 } from "@react-three/drei";
@@ -145,8 +144,10 @@ export function PlanModelViewer({
   const navigationCommandIdRef = useRef(0);
   const trackedViewRef = useRef(false);
   const activeVariant = allVariants.find((variant) => variant.name === activeVariantName) ?? allVariants[0]!;
-  const furniture =
-    activeVariant.furniture.length > 0 ? activeVariant.furniture : createBaseFurniture(plan, activeVariant);
+  const furniture = useMemo(
+    () => normalizeFurnitureForPlan(plan, activeVariant),
+    [activeVariant, plan],
+  );
   const baseActiveCameraPreset =
     cameraPresets.find((preset) => preset.id === activeCameraPresetId) ??
     cameraPresets[0]!;
@@ -874,16 +875,52 @@ function OpeningMarker({
   opening: ReturnType<typeof planToSceneSpec>["openings"][number];
 }) {
   if (opening.type === "door") {
+    const width = opening.size[0];
+    const height = Math.min(opening.size[1], 2.08);
+    const frameDepth = 0.08;
+    const frameThickness = 0.055;
+    const doorThickness = 0.045;
+    const leafWidth = Math.max(width * 0.82, 0.58);
+    const leafHeight = Math.max(height * 0.9, 1.82);
+    const openAngle = opening.id.length % 2 === 0 ? -0.72 : 0.72;
+
     return (
       <group position={opening.center} rotation={[0, opening.rotationY, 0]}>
-        <mesh position={[0, -opening.size[1] / 2 + 0.035, 0]}>
-          <boxGeometry args={[opening.size[0], 0.07, 0.07]} />
-          <meshStandardMaterial color="#a56f43" roughness={0.5} />
-        </mesh>
-        <mesh position={[0, -opening.size[1] / 2 + 0.09, 0.01]}>
-          <boxGeometry args={[opening.size[0] * 0.92, 0.04, 0.18]} />
-          <meshStandardMaterial color="#d2a679" roughness={0.62} />
-        </mesh>
+        <Box
+          size={[width * 0.98, 0.055, 0.2]}
+          position={[0, -height / 2 + 0.035, 0.015]}
+          color="#c99a61"
+        />
+        <Box
+          size={[frameThickness, height, frameDepth]}
+          position={[-width / 2, 0, 0.005]}
+          color="#8f5f38"
+        />
+        <Box
+          size={[frameThickness, height, frameDepth]}
+          position={[width / 2, 0, 0.005]}
+          color="#8f5f38"
+        />
+        <Box
+          size={[width + frameThickness, frameThickness, frameDepth]}
+          position={[0, height / 2 - frameThickness / 2, 0.005]}
+          color="#8f5f38"
+        />
+        <group
+          position={[-width / 2 + frameThickness * 0.7, -height / 2 + leafHeight / 2, 0.09]}
+          rotation={[0, openAngle, 0]}
+        >
+          <Box
+            size={[leafWidth, leafHeight, doorThickness]}
+            position={[leafWidth / 2, 0, 0]}
+            color="#b87745"
+          />
+          <Box
+            size={[0.045, 0.045, doorThickness * 1.8]}
+            position={[leafWidth * 0.82, 0.08, Math.sign(openAngle) * 0.035]}
+            color="#e2c38f"
+          />
+        </group>
       </group>
     );
   }
@@ -901,94 +938,15 @@ function OpeningMarker({
   );
 }
 
-function DoorPortalMarkers({
-  portals,
-  rooms,
-  activeRoom,
-  activePortalTarget,
-  onOpenPortal,
-}: {
+function DoorPortalMarkers(props: {
   portals: DoorPortal[];
   rooms: RoomCameraBounds[];
   activeRoom?: RoomCameraBounds;
   activePortalTarget: PortalTarget | null;
   onOpenPortal: (target: PortalTarget) => void;
 }) {
-  if (!activeRoom) {
-    return null;
-  }
-
-  return (
-    <>
-      {portals
-        .map((portal) => {
-          if (!portal.roomIds.includes(activeRoom.id)) {
-            return null;
-          }
-
-          const targetRoomId = portal.roomIds.find(
-            (roomId) => roomId !== activeRoom.id,
-          );
-          const targetRoom = rooms.find((room) => room.id === targetRoomId);
-
-          if (!targetRoom) {
-            return null;
-          }
-
-          const target = { portal, targetRoom };
-          const isActive = activePortalTarget?.portal.id === portal.id;
-
-          return (
-            <group
-              key={`${portal.id}-${targetRoom.id}`}
-              position={[portal.position.x, 0.07, portal.position.z]}
-            >
-              <mesh
-                rotation={[-Math.PI / 2, 0, 0]}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenPortal(target);
-                }}
-                onPointerOver={(event) => {
-                  event.stopPropagation();
-                  document.body.style.cursor = "pointer";
-                }}
-                onPointerOut={() => {
-                  document.body.style.cursor = "";
-                }}
-              >
-                <ringGeometry args={[0.22, 0.34, 32]} />
-                <meshStandardMaterial
-                  color={portal.synthetic ? "#8ba89a" : "#b87745"}
-                  transparent
-                  opacity={isActive ? 0.78 : 0.38}
-                  roughness={0.55}
-                />
-              </mesh>
-              {isActive ? (
-                <Html
-                  position={[0, 1.18, 0]}
-                  center
-                  transform={false}
-                  distanceFactor={8}
-                >
-                  <button
-                    type="button"
-                    className="door-hotspot"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenPortal(target);
-                    }}
-                  >
-                    Open {targetRoom.label}
-                  </button>
-                </Html>
-              ) : null}
-            </group>
-          );
-        })}
-    </>
-  );
+  void props;
+  return null;
 }
 
 function ProceduralFurniture({
@@ -1509,6 +1467,246 @@ function distanceSquared(
   right: { x: number; z: number },
 ) {
   return (left.x - right.x) ** 2 + (left.z - right.z) ** 2;
+}
+
+function normalizeFurnitureForPlan(
+  plan: PlanSchema,
+  variant: DesignVariantSchema,
+): FurnitureItem[] {
+  const sourceFurniture =
+    variant.furniture.length > 0
+      ? variant.furniture
+      : createBaseFurniture(plan, variant);
+  const rooms = getRoomCameraBounds(plan);
+  const roomById = new Map(rooms.map((room) => [room.id, room]));
+  const roomIndexes = new Map<string, number>();
+
+  const normalized = sourceFurniture.flatMap((item) => {
+    const room = roomById.get(item.roomId);
+
+    if (!room) {
+      return [];
+    }
+
+    const roomIndex = roomIndexes.get(room.id) ?? 0;
+    roomIndexes.set(room.id, roomIndex + 1);
+
+    const assetId = normalizeFurnitureAssetId(item.assetId, room, roomIndex);
+    const scale = normalizeFurnitureScale(assetId, item.scale, room);
+    const layout = createRoomFurnitureLayout(room, assetId, roomIndex, scale);
+    const shouldReposition = !isFurnitureInsideRoom(item, room, scale);
+    const position = clampFurniturePosition(
+      shouldReposition ? layout.position : item.position,
+      room,
+      scale,
+    );
+
+    return [
+      {
+        ...item,
+        assetId,
+        roomId: room.id,
+        position: {
+          x: position.x,
+          y: getFurnitureGroundY(assetId, scale),
+          z: position.z,
+        },
+        rotationY: shouldReposition
+          ? layout.rotationY
+          : normalizeFiniteNumber(item.rotationY, layout.rotationY),
+        scale,
+      },
+    ];
+  });
+
+  return normalized.length > 0 ? normalized : createBaseFurniture(plan, variant);
+}
+
+function normalizeFurnitureAssetId(
+  assetId: string,
+  room: RoomCameraBounds,
+  index: number,
+) {
+  const normalized = assetId.toLowerCase();
+
+  if (
+    normalized === "sofa" ||
+    normalized === "table" ||
+    normalized === "desk" ||
+    normalized === "bed" ||
+    normalized === "chair" ||
+    normalized === "rug" ||
+    normalized === "plant"
+  ) {
+    return normalized;
+  }
+
+  return chooseFurnitureAssetForRoom(room, index);
+}
+
+function chooseFurnitureAssetForRoom(room: RoomCameraBounds, index: number) {
+  const label = room.label.toLowerCase();
+
+  if (label.includes("bed")) {
+    return "bed";
+  }
+  if (label.includes("office") || label.includes("guest")) {
+    return "desk";
+  }
+  if (label.includes("living") || label.includes("dining")) {
+    return index === 0 ? "sofa" : "table";
+  }
+  if (label.includes("bath")) {
+    return "table";
+  }
+
+  return index % 2 === 0 ? "table" : "chair";
+}
+
+function normalizeFurnitureScale(
+  assetId: string,
+  scale: FurnitureItem["scale"],
+  room: RoomCameraBounds,
+): FurnitureItem["scale"] {
+  const defaults = getFurnitureDefaults(assetId);
+  const maxWidth = Math.max(0.38, room.width - 0.72);
+  const maxDepth = Math.max(0.38, room.depth - 0.72);
+
+  return {
+    x: clampNumber(normalizeFiniteNumber(scale.x, defaults.scale.x), 0.28, maxWidth),
+    y: clampNumber(normalizeFiniteNumber(scale.y, defaults.scale.y), 0.12, 1.25),
+    z: clampNumber(normalizeFiniteNumber(scale.z, defaults.scale.z), 0.28, maxDepth),
+  };
+}
+
+function getFurnitureDefaults(assetId: string): {
+  scale: FurnitureItem["scale"];
+  y: number;
+} {
+  switch (assetId) {
+    case "bed":
+      return { scale: { x: 1.55, y: 0.55, z: 1.95 }, y: 0.32 };
+    case "desk":
+      return { scale: { x: 1.28, y: 0.72, z: 0.58 }, y: 0.38 };
+    case "table":
+      return { scale: { x: 0.95, y: 0.72, z: 0.95 }, y: 0.38 };
+    case "chair":
+      return { scale: { x: 0.68, y: 0.72, z: 0.68 }, y: 0.34 };
+    case "rug":
+      return { scale: { x: 1.8, y: 0.08, z: 1.2 }, y: 0.04 };
+    case "plant":
+      return { scale: { x: 0.55, y: 1.0, z: 0.55 }, y: 0.5 };
+    case "sofa":
+    default:
+      return { scale: { x: 1.85, y: 0.68, z: 0.86 }, y: 0.38 };
+  }
+}
+
+function createRoomFurnitureLayout(
+  room: RoomCameraBounds,
+  assetId: string,
+  index: number,
+  scale: FurnitureItem["scale"],
+): { position: { x: number; z: number }; rotationY: number } {
+  const insetX = Math.min(Math.max(scale.x * 0.65, 0.42), room.width * 0.34);
+  const insetZ = Math.min(Math.max(scale.z * 0.65, 0.42), room.depth * 0.34);
+  const nudge = (index % 3 - 1) * 0.35;
+
+  switch (assetId) {
+    case "bed":
+      return {
+        position: { x: room.center.x + nudge, z: room.minZ + insetZ },
+        rotationY: 0,
+      };
+    case "desk":
+      return {
+        position: { x: room.maxX - insetX, z: room.center.z + nudge },
+        rotationY: Math.PI / 2,
+      };
+    case "sofa":
+      return {
+        position: { x: room.center.x + nudge, z: room.maxZ - insetZ },
+        rotationY: 0,
+      };
+    case "chair":
+      return {
+        position: { x: room.center.x + nudge, z: room.center.z },
+        rotationY: Math.PI,
+      };
+    case "plant":
+      return {
+        position: { x: room.maxX - insetX, z: room.minZ + insetZ },
+        rotationY: 0,
+      };
+    case "rug":
+    case "table":
+    default:
+      return {
+        position: { x: room.center.x + nudge, z: room.center.z },
+        rotationY: index % 2 === 0 ? 0 : Math.PI / 2,
+      };
+  }
+}
+
+function isFurnitureInsideRoom(
+  item: FurnitureItem,
+  room: RoomCameraBounds,
+  scale: FurnitureItem["scale"],
+) {
+  const x = item.position.x;
+  const z = item.position.z;
+  const paddingX = Math.min(scale.x / 2 + 0.12, room.width / 2);
+  const paddingZ = Math.min(scale.z / 2 + 0.12, room.depth / 2);
+
+  return (
+    Number.isFinite(x) &&
+    Number.isFinite(z) &&
+    x >= room.minX + paddingX &&
+    x <= room.maxX - paddingX &&
+    z >= room.minZ + paddingZ &&
+    z <= room.maxZ - paddingZ
+  );
+}
+
+function clampFurniturePosition(
+  position: { x: number; z: number },
+  room: RoomCameraBounds,
+  scale: FurnitureItem["scale"],
+) {
+  const paddingX = Math.min(scale.x / 2 + 0.18, Math.max(room.width / 2 - 0.02, 0));
+  const paddingZ = Math.min(scale.z / 2 + 0.18, Math.max(room.depth / 2 - 0.02, 0));
+
+  return {
+    x: clampNumber(
+      normalizeFiniteNumber(position.x, room.center.x),
+      room.minX + paddingX,
+      room.maxX - paddingX,
+    ),
+    z: clampNumber(
+      normalizeFiniteNumber(position.z, room.center.z),
+      room.minZ + paddingZ,
+      room.maxZ - paddingZ,
+    ),
+  };
+}
+
+function getFurnitureGroundY(
+  assetId: string,
+  scale: FurnitureItem["scale"],
+) {
+  return getFurnitureDefaults(assetId).y || Math.max(scale.y * 0.52, 0.24);
+}
+
+function normalizeFiniteNumber(value: number, fallback: number) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (min > max) {
+    return (min + max) / 2;
+  }
+
+  return Math.min(Math.max(value, min), max);
 }
 
 function createBaseFurniture(plan: PlanSchema, variant: DesignVariantSchema): FurnitureItem[] {

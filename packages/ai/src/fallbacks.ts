@@ -84,13 +84,28 @@ export function sanitizeVariantForPlan(
   intent: DesignVariantIntent = {},
 ): DesignVariantSchema {
   const validRoomIds = new Set(plan.rooms.map((room) => room.id));
+  const roomBoundsById = new Map(
+    plan.rooms.map((room) => [room.id, getRoomBounds(room, plan)]),
+  );
+  const furnitureRoomIndexes = new Map<string, number>();
   const warnings = [...variant.warnings];
-  const furniture = variant.furniture.filter((item) => {
+  const furniture = variant.furniture.flatMap((item) => {
     const valid = validRoomIds.has(item.roomId);
     if (!valid) {
       warnings.push(`Dropped furniture item "${item.id}" because room "${item.roomId}" does not exist in this plan.`);
+      return [];
     }
-    return valid;
+
+    const roomBounds = roomBoundsById.get(item.roomId);
+
+    if (!roomBounds) {
+      return [];
+    }
+
+    const roomIndex = furnitureRoomIndexes.get(item.roomId) ?? 0;
+    furnitureRoomIndexes.set(item.roomId, roomIndex + 1);
+
+    return [normalizeFurnitureItemForRoom(item, roomBounds, roomIndex)];
   });
   const roomNotes = variant.roomNotes.filter((note) => {
     const valid = validRoomIds.has(note.roomId);
@@ -113,15 +128,250 @@ export function sanitizeVariantForPlan(
             intent.budgetLevel ?? "balanced",
           ),
         }));
+  const safeFurniture =
+    furniture.length > 0
+      ? furniture
+      : createFurnitureForRooms(plan, fallbackRooms, 0, variant.palette);
 
   return {
     ...variant,
     roomNotes: safeRoomNotes,
-    furniture,
+    furniture: safeFurniture,
     warnings: Array.from(new Set(warnings)),
     rationale: variant.rationale ?? createRationale(intent, "", intent.budgetLevel ?? "balanced"),
     intent,
   };
+}
+
+type RoomBounds = {
+  id: string;
+  label: string;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  center: { x: number; z: number };
+  width: number;
+  depth: number;
+};
+
+function getRoomBounds(room: Room, plan: PlanSchema): RoomBounds {
+  const points = room.polygon.map((point) => ({
+    x: point.x / plan.scalePxPerMeter,
+    z: point.y / plan.scalePxPerMeter,
+  }));
+  const xs = points.map((point) => point.x);
+  const zs = points.map((point) => point.z);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minZ = Math.min(...zs);
+  const maxZ = Math.max(...zs);
+  const width = Math.max(maxX - minX, 0.1);
+  const depth = Math.max(maxZ - minZ, 0.1);
+
+  return {
+    id: room.id,
+    label: room.label,
+    minX,
+    maxX,
+    minZ,
+    maxZ,
+    center: { x: minX + width / 2, z: minZ + depth / 2 },
+    width,
+    depth,
+  };
+}
+
+function normalizeFurnitureItemForRoom(
+  item: FurnitureItem,
+  room: RoomBounds,
+  index: number,
+): FurnitureItem {
+  const assetId = normalizeFurnitureAssetId(item.assetId, room, index);
+  const scale = normalizeFurnitureScale(assetId, item.scale, room);
+  const layout = createFurnitureLayout(room, assetId, index, scale);
+  const shouldReposition = !isFurnitureInsideRoom(item, room, scale);
+  const position = clampFurniturePosition(
+    shouldReposition ? layout.position : item.position,
+    room,
+    scale,
+  );
+
+  return {
+    ...item,
+    assetId,
+    position: {
+      x: position.x,
+      y: getFurnitureY(assetId),
+      z: position.z,
+    },
+    rotationY: shouldReposition
+      ? layout.rotationY
+      : normalizeFiniteNumber(item.rotationY, layout.rotationY),
+    scale,
+  };
+}
+
+function normalizeFurnitureAssetId(
+  assetId: string,
+  room: RoomBounds,
+  index: number,
+) {
+  const normalized = assetId.toLowerCase();
+
+  if (
+    normalized === "sofa" ||
+    normalized === "table" ||
+    normalized === "desk" ||
+    normalized === "bed" ||
+    normalized === "chair" ||
+    normalized === "rug" ||
+    normalized === "plant"
+  ) {
+    return normalized;
+  }
+
+  return chooseAssetForRoom({ id: room.id, label: room.label, polygon: [] }, index);
+}
+
+function normalizeFurnitureScale(
+  assetId: string,
+  scale: FurnitureItem["scale"],
+  room: RoomBounds,
+): FurnitureItem["scale"] {
+  const defaults = getFurnitureDefaults(assetId);
+  const maxWidth = Math.max(0.38, room.width - 0.72);
+  const maxDepth = Math.max(0.38, room.depth - 0.72);
+
+  return {
+    x: clampNumber(normalizeFiniteNumber(scale.x, defaults.x), 0.28, maxWidth),
+    y: clampNumber(normalizeFiniteNumber(scale.y, defaults.y), 0.12, 1.25),
+    z: clampNumber(normalizeFiniteNumber(scale.z, defaults.z), 0.28, maxDepth),
+  };
+}
+
+function getFurnitureDefaults(assetId: string): FurnitureItem["scale"] {
+  switch (assetId) {
+    case "bed":
+      return { x: 1.55, y: 0.55, z: 1.95 };
+    case "desk":
+      return { x: 1.28, y: 0.72, z: 0.58 };
+    case "chair":
+      return { x: 0.68, y: 0.72, z: 0.68 };
+    case "rug":
+      return { x: 1.8, y: 0.08, z: 1.2 };
+    case "plant":
+      return { x: 0.55, y: 1, z: 0.55 };
+    case "table":
+      return { x: 0.95, y: 0.72, z: 0.95 };
+    case "sofa":
+    default:
+      return { x: 1.85, y: 0.68, z: 0.86 };
+  }
+}
+
+function createFurnitureLayout(
+  room: RoomBounds,
+  assetId: string,
+  index: number,
+  scale: FurnitureItem["scale"],
+) {
+  const insetX = Math.min(Math.max(scale.x * 0.65, 0.42), room.width * 0.34);
+  const insetZ = Math.min(Math.max(scale.z * 0.65, 0.42), room.depth * 0.34);
+  const nudge = (index % 3 - 1) * 0.35;
+
+  if (assetId === "bed") {
+    return {
+      position: { x: room.center.x + nudge, z: room.minZ + insetZ },
+      rotationY: 0,
+    };
+  }
+  if (assetId === "desk") {
+    return {
+      position: { x: room.maxX - insetX, z: room.center.z + nudge },
+      rotationY: Math.PI / 2,
+    };
+  }
+  if (assetId === "sofa") {
+    return {
+      position: { x: room.center.x + nudge, z: room.maxZ - insetZ },
+      rotationY: 0,
+    };
+  }
+
+  return {
+    position: { x: room.center.x + nudge, z: room.center.z },
+    rotationY: index % 2 === 0 ? 0 : Math.PI / 2,
+  };
+}
+
+function isFurnitureInsideRoom(
+  item: FurnitureItem,
+  room: RoomBounds,
+  scale: FurnitureItem["scale"],
+) {
+  const paddingX = Math.min(scale.x / 2 + 0.12, room.width / 2);
+  const paddingZ = Math.min(scale.z / 2 + 0.12, room.depth / 2);
+
+  return (
+    Number.isFinite(item.position.x) &&
+    Number.isFinite(item.position.z) &&
+    item.position.x >= room.minX + paddingX &&
+    item.position.x <= room.maxX - paddingX &&
+    item.position.z >= room.minZ + paddingZ &&
+    item.position.z <= room.maxZ - paddingZ
+  );
+}
+
+function clampFurniturePosition(
+  position: { x: number; z: number },
+  room: RoomBounds,
+  scale: FurnitureItem["scale"],
+) {
+  const paddingX = Math.min(scale.x / 2 + 0.18, Math.max(room.width / 2 - 0.02, 0));
+  const paddingZ = Math.min(scale.z / 2 + 0.18, Math.max(room.depth / 2 - 0.02, 0));
+
+  return {
+    x: clampNumber(
+      normalizeFiniteNumber(position.x, room.center.x),
+      room.minX + paddingX,
+      room.maxX - paddingX,
+    ),
+    z: clampNumber(
+      normalizeFiniteNumber(position.z, room.center.z),
+      room.minZ + paddingZ,
+      room.maxZ - paddingZ,
+    ),
+  };
+}
+
+function getFurnitureY(assetId: string) {
+  if (assetId === "bed") {
+    return 0.32;
+  }
+  if (assetId === "chair") {
+    return 0.34;
+  }
+  if (assetId === "rug") {
+    return 0.04;
+  }
+  if (assetId === "plant") {
+    return 0.5;
+  }
+
+  return 0.38;
+}
+
+function normalizeFiniteNumber(value: number, fallback: number) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  if (min > max) {
+    return (min + max) / 2;
+  }
+
+  return Math.min(Math.max(value, min), max);
 }
 
 function prioritizeRooms(rooms: Room[], intent: DesignVariantIntent): Room[] {
