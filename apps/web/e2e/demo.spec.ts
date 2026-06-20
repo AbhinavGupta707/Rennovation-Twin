@@ -87,6 +87,14 @@ function byteDiff(a: Buffer, b: Buffer): number {
   return diff;
 }
 
+async function resetDemoProject(page: Page) {
+  const response = await page.request.post(
+    "/api/projects/demo-london-flat/reset-demo",
+  );
+
+  expect(response.ok()).toBe(true);
+}
+
 async function webglCanvasStats(page: Page) {
   await page.locator("canvas").first().waitFor({
     state: "attached",
@@ -212,6 +220,7 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   test.setTimeout(120_000);
 
   await page.setViewportSize({ width: 1440, height: 980 });
+  await resetDemoProject(page);
   await page.goto("/projects/demo-london-flat/model");
   await expect(
     page.getByRole("heading", { name: "London flat model" }),
@@ -288,28 +297,28 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   const movedLivingStats = await webglCanvasStats(page);
   expect(movedLivingStats.colorBuckets).toBeGreaterThan(6);
 
-  await page.getByRole("button", { name: /Bedroom \/ office/ }).click();
+  await page.getByRole("button", { name: /^Bedroom$/ }).click();
   await expect(
-    page.getByRole("button", { name: /Bedroom \/ office/ }),
+    page.getByRole("button", { name: /^Bedroom$/ }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.waitForTimeout(500);
   const bedroomStats = await webglCanvasStats(page);
   expect(bedroomStats.colorBuckets).toBeGreaterThan(6);
 
-  const beforeWalkthrough = await page.screenshot({ fullPage: true });
-  await page.getByRole("button", { name: /^Walkthrough$/ }).click();
+  const beforeKitchen = await page.screenshot({ fullPage: true });
+  await page.getByRole("button", { name: /^Kitchen$/ }).click();
   await expect(
-    page.getByRole("button", { name: /^Walkthrough$/ }),
+    page.getByRole("button", { name: /^Kitchen$/ }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.waitForTimeout(500);
-  const afterWalkthrough = await page.screenshot({ fullPage: true });
-  expect(byteDiff(beforeWalkthrough, afterWalkthrough)).toBeGreaterThan(1_000);
-  const walkthroughStats = await webglCanvasStats(page);
-  expect(walkthroughStats.colorBuckets).toBeGreaterThan(6);
+  const afterKitchen = await page.screenshot({ fullPage: true });
+  expect(byteDiff(beforeKitchen, afterKitchen)).toBeGreaterThan(1_000);
+  const kitchenStats = await webglCanvasStats(page);
+  expect(kitchenStats.colorBuckets).toBeGreaterThan(6);
 
-  await page.getByRole("button", { name: /Auto tour/ }).click();
+  await page.getByRole("button", { name: /Office \/ guest/ }).click();
   await expect(
-    page.getByRole("button", { name: /Auto tour/ }),
+    page.getByRole("button", { name: /Office \/ guest/ }),
   ).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: /Capture view/ }).click();
@@ -318,6 +327,7 @@ test("London flat 3D model renders human room cameras on desktop", async ({
 
 test("London flat 3D model renders on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await resetDemoProject(page);
   await page.goto("/projects/demo-london-flat/model");
   await expect(
     page.getByRole("heading", { name: "London flat model" }),
@@ -337,6 +347,7 @@ test("London flat plan editor shows fixture geometry and supports manual wall dr
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
+  await resetDemoProject(page);
   await page.goto(`/projects/${editorProjectId}/plan`);
 
   await expect(
@@ -576,6 +587,7 @@ test("variant, report, share, and proof flows create observable hackathon events
   test.setTimeout(120_000);
 
   await page.setViewportSize({ width: 1280, height: 900 });
+  await resetDemoProject(page);
   await page.goto("/projects/demo-london-flat/design");
 
   await page.getByText("Fine tune brief").click();
@@ -590,7 +602,7 @@ test("variant, report, share, and proof flows create observable hackathon events
   await expect(page.getByText(/Fits a premium budget/)).toBeVisible();
 
   await page.goto("/projects/demo-london-flat/model?variant=Resale%20Neutral");
-  await page.getByRole("button", { name: /Bedroom \/ office/ }).click();
+  await page.getByRole("button", { name: /Office \/ guest/ }).click();
   await page.getByRole("button", { name: /Capture view/ }).click();
   await expect(page.getByText(/Screenshot saved for report/)).toBeVisible();
 

@@ -203,6 +203,7 @@ type PrismaStoreClient = {
 
 class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
   mode = "prisma" as const;
+  private persistedEventKeys = new Set<string>();
 
   async read(): Promise<RuntimeStore> {
     const client = await getPrismaStoreClient();
@@ -215,6 +216,16 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
         select: { name: true, projectId: true, props: true, createdAt: true },
       }),
     ]);
+
+    this.persistedEventKeys = new Set(
+      eventRows.map((row) =>
+        createEventPersistenceKey({
+          name: row.name as EventName,
+          projectId: row.projectId ?? undefined,
+          createdAt: row.createdAt.toISOString(),
+        }),
+      ),
+    );
 
     return normalizeRuntimeStore({
       projects: projectRows.map((row) => row.stateJson).filter(isProjectRecord),
@@ -235,6 +246,9 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
   async write(store: RuntimeStore) {
     const client = await getPrismaStoreClient();
     const projects = [...store.projects.values()];
+    const eventsToCreate = store.events.filter(
+      (event) => !this.persistedEventKeys.has(createEventPersistenceKey(event)),
+    );
 
     await client.$transaction(
       async (transaction) => {
@@ -250,11 +264,9 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
           });
         }
 
-        await transaction.eventLog.deleteMany();
-
-        if (store.events.length) {
+        if (eventsToCreate.length) {
           await transaction.eventLog.createMany({
-            data: store.events.map((event) => ({
+            data: eventsToCreate.map((event) => ({
               name: event.name,
               projectId:
                 event.projectId && store.projects.has(event.projectId)
@@ -268,6 +280,10 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
       },
       { maxWait: 10_000, timeout: 15_000 },
     );
+
+    for (const event of eventsToCreate) {
+      this.persistedEventKeys.add(createEventPersistenceKey(event));
+    }
   }
 }
 
@@ -300,6 +316,12 @@ function isProjectRecord(value: unknown): value is ProjectRecord {
 
 function isEventProps(value: unknown): value is EventProps {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createEventPersistenceKey(
+  event: Pick<TrackedEvent, "name" | "projectId" | "createdAt">,
+) {
+  return `${event.name}:${event.projectId ?? ""}:${event.createdAt}`;
 }
 
 function normalizeRuntimeStore(payload: Partial<StoreShape>): RuntimeStore {
@@ -578,6 +600,44 @@ export async function savePlan(
     },
     project.id,
   );
+
+  await persistStore(store);
+  return project;
+}
+
+export async function resetDemoProject(): Promise<ProjectRecord> {
+  const store = await getStore();
+  const current = store.projects.get("demo-london-flat");
+  const now = new Date().toISOString();
+  const project: ProjectRecord = {
+    id: "demo-london-flat",
+    title: "Sample London flat",
+    status: "VARIANTS_GENERATED",
+    createdAt: current?.createdAt ?? now,
+    updatedAt: now,
+    plan: londonFlatPlan,
+    uploads: [],
+    variants: londonFlatVariants,
+    planVersions: [
+      {
+        id: "demo-london-flat-sample-plan",
+        version: 1,
+        source: "SAMPLE",
+        confidence: 0.96,
+        plan: londonFlatPlan,
+        createdAt: now,
+      },
+    ],
+    reportExports: [],
+    screenshots: [],
+    shareToken: current?.shareToken,
+  };
+
+  store.projects.set(project.id, project);
+
+  if (project.shareToken) {
+    store.shareTokens.set(project.shareToken, project.id);
+  }
 
   await persistStore(store);
   return project;

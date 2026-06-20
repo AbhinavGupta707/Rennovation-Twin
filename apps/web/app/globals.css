@@ -617,29 +617,25 @@ a {
   grid-row: 2;
 }
 
-.door-prompt {
-  position: absolute;
-  right: 1rem;
-  bottom: 6.9rem;
-  z-index: 4;
+.door-hotspot {
   display: inline-flex;
-  min-height: 2.75rem;
+  min-height: 2.35rem;
   align-items: center;
-  gap: var(--space-2);
   border: 1px solid rgba(184, 119, 69, 0.3);
   border-radius: 0.45rem;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(8px);
   color: #7a4b24;
   cursor: pointer;
   font: inherit;
   font-weight: 900;
-  padding: 0.65rem 0.8rem;
+  white-space: nowrap;
+  padding: 0.55rem 0.75rem;
   box-shadow: 0 12px 28px rgba(20, 32, 28, 0.12);
 }
 
-.door-prompt:hover,
-.door-prompt:focus-visible {
+.door-hotspot:hover,
+.door-hotspot:focus-visible {
   border-color: rgba(184, 119, 69, 0.55);
   background: rgba(255, 251, 245, 0.92);
 }

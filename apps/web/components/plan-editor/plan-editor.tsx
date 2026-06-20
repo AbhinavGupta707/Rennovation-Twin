@@ -18,9 +18,11 @@ import {
   PencilLine,
   Plus,
   Redo2,
+  RefreshCcw,
   Ruler,
   Save,
   Tags,
+  Trash2,
   TriangleAlert,
   Undo2,
   Wind,
@@ -195,6 +197,20 @@ function getNextManualWallIndex(walls: Wall[]) {
   return manualIndexes.length ? Math.max(...manualIndexes) + 1 : 1;
 }
 
+function isAddedOpening(opening: Opening) {
+  return /^(manual-opening|opening|door|window)-\d+$/.test(opening.id);
+}
+
+function getNextManualOpeningIndex(openings: Opening[]) {
+  const indexes = openings
+    .map((opening) => opening.id.match(/^(?:manual-opening|opening|door|window)-(\d+)$/)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+
+  return indexes.length ? Math.max(...indexes) + 1 : 1;
+}
+
 function createEditableWalls(walls: Wall[]): EditableWall[] {
   const usedIds = new Set<string>();
   let nextManualIndex = getNextManualWallIndex(walls);
@@ -300,6 +316,10 @@ export function PlanEditor({
   const manualWallCount = walls.filter(
     (wall) => wall.source === "manual",
   ).length;
+  const addedOpeningCount = openings.filter(isAddedOpening).length;
+  const selectedWallIsManual = selectedWall?.source === "manual";
+  const hasManualEdits = manualWallCount > 0 || addedOpeningCount > 0;
+  const canResetSample = projectId === "demo-london-flat";
   const hasScale = scalePxPerMeter > 0;
   const hasEnoughWalls = walls.length >= 4;
   const isPlanValid = hasScale && hasEnoughWalls;
@@ -452,7 +472,7 @@ export function PlanEditor({
     setOpenings((current) => [
       ...current,
       {
-        id: `${type}-${current.length + 1}`,
+        id: `manual-opening-${getNextManualOpeningIndex(current)}`,
         type,
         wallId: selectedWall.id,
         offsetM: Math.max(0.12, (wallLengthM - widthM) / 2),
@@ -461,6 +481,64 @@ export function PlanEditor({
         sillHeightM: type === "window" ? 0.9 : undefined,
       },
     ]);
+  }
+
+  function deleteSelectedManualWall() {
+    if (!selectedWall || selectedWall.source !== "manual") {
+      return;
+    }
+
+    commitHistory();
+    setWalls((current) =>
+      current.filter((wall) => wall.id !== selectedWall.id),
+    );
+    setOpenings((current) =>
+      current.filter((opening) => opening.wallId !== selectedWall.id),
+    );
+    setSelectedWallId(
+      walls.find((wall) => wall.id !== selectedWall.id)?.id ?? "",
+    );
+  }
+
+  function clearManualEdits() {
+    if (!hasManualEdits) {
+      return;
+    }
+
+    commitHistory();
+    const nextWalls = walls.filter((wall) => wall.source !== "manual");
+    setWalls(nextWalls);
+    setOpenings((current) =>
+      current.filter((opening) => !isAddedOpening(opening)),
+    );
+    setSelectedWallId(nextWalls[0]?.id ?? "");
+  }
+
+  async function resetSamplePlan() {
+    if (!canResetSample) {
+      return;
+    }
+
+    setSaveState("saving");
+    setSaveMessage("Resetting the sample plan...");
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/reset-demo`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not reset the sample plan.");
+      }
+
+      router.refresh();
+      window.location.reload();
+    } catch (error) {
+      setSaveState("error");
+      setSaveMessage(
+        error instanceof Error ? error.message : "Could not reset the sample plan.",
+      );
+    }
   }
 
   function calibrateScale() {
@@ -1023,6 +1101,36 @@ export function PlanEditor({
             >
               <Redo2 size={18} aria-hidden="true" /> Redo
             </button>
+          </div>
+          <div className="mt-3 grid gap-2">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={!selectedWallIsManual}
+              onClick={deleteSelectedManualWall}
+            >
+              <Trash2 size={18} aria-hidden="true" /> Delete selected wall
+            </button>
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={!hasManualEdits}
+              onClick={clearManualEdits}
+            >
+              <Trash2 size={18} aria-hidden="true" /> Clear added walls/windows
+            </button>
+            {canResetSample ? (
+              <button
+                className="button button-secondary"
+                type="button"
+                disabled={saveState === "saving"}
+                onClick={() => {
+                  void resetSamplePlan();
+                }}
+              >
+                <RefreshCcw size={18} aria-hidden="true" /> Reset sample plan
+              </button>
+            ) : null}
           </div>
         </section>
 

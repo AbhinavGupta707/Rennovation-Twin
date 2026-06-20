@@ -3,11 +3,13 @@ import { z } from "zod";
 export async function runJsonModel<T>({
   system,
   user,
-  schema
+  schema,
+  timeoutMs = 5_000,
 }: {
   system: string;
   user: string;
   schema: z.ZodType<T>;
+  timeoutMs?: number;
 }): Promise<T> {
   const apiKey = process.env.FIREWORKS_API_KEY;
   const model = process.env.FIREWORKS_MODEL;
@@ -16,23 +18,41 @@ export async function runJsonModel<T>({
     throw new Error("Fireworks is not configured.");
   }
 
-  const response = await fetch("https://api.fireworks.ai/inference/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      response_format: { type: "json_object" },
-      max_tokens: 2200,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user }
-      ]
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+
+  try {
+    response = await fetch(
+      "https://api.fireworks.ai/inference/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          response_format: { type: "json_object" },
+          max_tokens: 2200,
+          temperature: 0.2,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ]
+        }),
+        signal: controller.signal,
+      },
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Fireworks request timed out.");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`Fireworks request failed with ${response.status}`);
