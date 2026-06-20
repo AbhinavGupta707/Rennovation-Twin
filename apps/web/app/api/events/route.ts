@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Events, type EventName } from "@renovation-twin/events";
 import { fail, ok } from "@renovation-twin/types";
 import { listEvents, recordEvent } from "../../../lib/server/project-store";
+import { pendoTrackServer } from "../../../lib/server/pendo-track";
 
 export async function GET() {
   return NextResponse.json(ok({ events: await listEvents() }));
@@ -21,5 +22,6 @@ export async function POST(request: Request) {
   }
 
   const event = await recordEvent(body.name, body.props, body.projectId);
+  pendoTrackServer(body.name, body.props, body.projectId);
   return NextResponse.json(ok({ event }));
 }
