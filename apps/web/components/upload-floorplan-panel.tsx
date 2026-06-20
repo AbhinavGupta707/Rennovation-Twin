@@ -27,6 +27,7 @@ type UploadData = {
   imageHeight: number;
   previewKind: "image" | "pdf-rendered" | "pdf-fallback";
   warning?: string;
+  parseResult?: ParseData;
   project: {
     status: ProjectStatus;
     uploads: Array<{ fileName: string; mimeType: string; sizeBytes: number }>;
@@ -106,7 +107,7 @@ export function UploadFloorplanPanel({
         rooms: data.project.plan.rooms.length,
         imageUrl: data.planImageUrl,
       });
-      setParseResult(null);
+      setParseResult(data.parseResult ?? null);
       setMessage(
         data.warning ??
           (data.previewKind === "pdf-rendered"

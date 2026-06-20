@@ -51,6 +51,7 @@ export async function POST(
     previewKind: preview.kind,
     createdAt: new Date().toISOString(),
   });
+  const autoParsedSvg = file.type === "image/svg+xml" && project.status === "PARSED";
 
   return jsonOk({
     fileUrl: preview.url,
@@ -58,7 +59,22 @@ export async function POST(
     imageWidth: preview.width,
     imageHeight: preview.height,
     previewKind: preview.kind,
-    warning: preview.warning,
+    warning:
+      preview.warning ??
+      (autoParsedSvg
+        ? `SVG parsed into ${project.plan.walls.length} wall candidates and ${project.plan.rooms.length} room ${project.plan.rooms.length === 1 ? "proposal" : "proposals"}. Review the trace before generating 3D.`
+        : undefined),
+    parseResult: autoParsedSvg
+      ? {
+          planProposal: project.plan,
+          confidence:
+            project.planVersions.at(-1)?.confidence ??
+            (project.plan.walls.length >= 4 ? 0.7 : 0.3),
+          warnings: [
+            "SVG geometry was parsed automatically. Review scale, rooms, and openings before generating 3D.",
+          ],
+        }
+      : undefined,
     project,
   });
 }

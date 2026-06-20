@@ -416,10 +416,10 @@ test("upload flow accepts a custom floor plan and exposes parser fallback state"
 
   await page.getByRole("button", { name: /^Upload$/ }).click();
   await expect(
-    page.getByText(
-      "Floor plan attached. Run parser proposal, then confirm the trace.",
-    ),
+    page.getByText(/SVG parsed into \d+ wall candidates and \d+ room proposals/),
   ).toBeVisible();
+  await expect(page.getByText("Detected walls")).toBeVisible();
+  await expect(page.getByText("Detected rooms")).toBeVisible();
 
   await page.getByRole("button", { name: /Parse proposal/ }).click();
   await expect(
@@ -590,6 +590,8 @@ test("variant, report, share, and proof flows create observable hackathon events
   await resetDemoProject(page);
   await page.goto("/projects/demo-london-flat/design");
 
+  await expect(page.getByText("Palette")).toBeVisible();
+  await expect(page.getByLabel("Walls color")).toBeVisible();
   await page.getByText("Fine tune brief").click();
   await page.getByRole("button", { name: "Premium" }).click();
   await page.getByRole("button", { name: "resale uplift" }).click();
@@ -603,9 +605,10 @@ test("variant, report, share, and proof flows create observable hackathon events
     page.getByRole("heading", { name: "Resale Neutral" }),
   ).toBeVisible();
   await expect(
-    page.getByText(
-      /Fireworks returned a structured design variant|request timed out|Deterministic fallback/i,
-    ),
+    page.locator(".inline-alert").filter({
+      hasText:
+        /Fireworks returned a structured design variant|request timed out|Deterministic fallback/i,
+    }),
   ).toBeVisible();
 
   await page.goto("/projects/demo-london-flat/model?variant=Resale%20Neutral");
@@ -632,7 +635,7 @@ test("variant, report, share, and proof flows create observable hackathon events
   await expect(page.getByText(/Report export recorded/)).toBeVisible();
   await page.getByRole("button", { name: /Create share view/ }).click();
 
-  const shareLink = page.locator(".share-url").first();
+  const shareLink = page.getByRole("link", { name: /\/share\// }).first();
   await expect(shareLink).toContainText("/share/");
   await shareLink.click();
   await expect(

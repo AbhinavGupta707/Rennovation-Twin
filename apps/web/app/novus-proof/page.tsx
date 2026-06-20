@@ -5,9 +5,13 @@ import { listEvents } from "../../lib/server/project-store";
 const funnel = [
   Events.ProjectCreated,
   Events.FloorplanUploaded,
+  Events.PlanParseStarted,
   Events.PlanParseCompleted,
+  Events.ManualEditStarted,
   Events.PlanConfirmed,
   Events.ModelGenerated,
+  Events.WalkthroughStarted,
+  Events.VariantPromptSubmitted,
   Events.VariantGenerated,
   Events.ReportExported,
   Events.ShareCreated,
