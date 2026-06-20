@@ -2,7 +2,7 @@ import {
   DesignVariantSchemaZ,
   type DesignVariantSchema,
 } from "@renovation-twin/types";
-import { Events, trackEvent } from "@renovation-twin/events";
+import { Events } from "@renovation-twin/events";
 import { pendoTrackServer } from "../../../../../lib/server/pendo-track";
 import {
   createFallbackVariantForPlan,
@@ -11,6 +11,7 @@ import {
 } from "@renovation-twin/ai";
 import {
   getProjectOrDemo,
+  recordEvent,
   saveVariant,
 } from "../../../../../lib/server/project-store";
 import { jsonOk } from "../../../../../lib/server/api-response";
@@ -44,7 +45,7 @@ export async function POST(
     ),
   };
 
-  trackEvent(
+  await recordEvent(
     Events.VariantPromptSubmitted,
     {
       projectId,
