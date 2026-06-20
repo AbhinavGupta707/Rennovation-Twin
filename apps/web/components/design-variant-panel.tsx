@@ -6,6 +6,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Loader2,
+  Palette as PaletteIcon,
   SlidersHorizontal,
   Sparkles,
   TriangleAlert,
@@ -41,6 +42,20 @@ const householdOptions = [
   "hybrid worker",
 ];
 
+const paletteFields = [
+  { key: "wall", label: "Walls" },
+  { key: "floor", label: "Floor" },
+  { key: "accent", label: "Accent" },
+  { key: "textile", label: "Textile" },
+] as const;
+
+const defaultPalette: DesignVariantSchema["palette"] = {
+  wall: "#f7f2e8",
+  floor: "#cfae7b",
+  accent: "#56675b",
+  textile: "#d9c7b1",
+};
+
 type GenerateVariantData = {
   variantId: string;
   variant: DesignVariantSchema;
@@ -61,6 +76,9 @@ export function DesignVariantPanel({
   const [variants, setVariants] = useState(visibleInitialVariants);
   const [stylePreset, setStylePreset] = useState(
     visibleInitialVariants[0]?.name ?? presets[0]!,
+  );
+  const [palette, setPalette] = useState<DesignVariantSchema["palette"]>(
+    visibleInitialVariants[0]?.palette ?? defaultPalette,
   );
   const [budgetLevel, setBudgetLevel] = useState<
     (typeof budgetOptions)[number]["value"]
@@ -93,6 +111,7 @@ export function DesignVariantPanel({
           useIntent,
           householdType,
           roomPriorities,
+          palette,
         },
       );
 
@@ -100,10 +119,11 @@ export function DesignVariantPanel({
         data.variant,
         ...current.filter((variant) => variant.name !== data.variant.name),
       ].filter(isVisibleVariant));
+      setPalette(data.variant.palette);
       setProvider(data.provider);
       setMessage(
         data.provider === "fallback"
-          ? (data.warning ?? "Deterministic fallback returned a variant.")
+          ? `Deterministic fallback returned a variant${data.warning ? ` (${data.warning})` : ""}.`
           : "Fireworks returned a structured design variant.",
       );
     } catch (error) {
@@ -144,10 +164,51 @@ export function DesignVariantPanel({
                 key={preset}
                 type="button"
                 aria-pressed={stylePreset === preset}
-                onClick={() => setStylePreset(preset)}
+                onClick={() => {
+                  setStylePreset(preset);
+                  const variantPalette = variants.find(
+                    (variant) => variant.name === preset,
+                  )?.palette;
+                  if (variantPalette) {
+                    setPalette(variantPalette);
+                  }
+                }}
               >
                 {preset}
               </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="palette-editor" aria-label="Palette controls">
+          <div className="palette-editor-heading">
+            <PaletteIcon size={18} aria-hidden="true" />
+            <span>Palette</span>
+          </div>
+          <div className="color-control-grid">
+            {paletteFields.map((field) => (
+              <label className="color-control" key={field.key}>
+                <span
+                  className="color-swatch"
+                  style={{ backgroundColor: palette[field.key] }}
+                  aria-hidden="true"
+                />
+                <span>
+                  {field.label}
+                  <small>{palette[field.key].toUpperCase()}</small>
+                </span>
+                <input
+                  type="color"
+                  value={palette[field.key]}
+                  aria-label={`${field.label} color`}
+                  onChange={(event) =>
+                    setPalette((current) => ({
+                      ...current,
+                      [field.key]: event.currentTarget.value,
+                    }))
+                  }
+                />
+              </label>
             ))}
           </div>
         </div>

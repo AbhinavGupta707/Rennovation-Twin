@@ -58,7 +58,10 @@ export async function runJsonModel<T>({
       },
     );
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (
+      (error instanceof DOMException && error.name === "AbortError") ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
       throw new Error("Fireworks request timed out.");
     }
 

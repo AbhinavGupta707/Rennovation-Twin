@@ -79,6 +79,34 @@ export function NovusProofPanel({
       <section className="tool-panel">
         <div className="panel-heading">
           <div>
+            <p className="eyebrow">Submission readiness</p>
+            <h2 className="panel-title">Novus integration contract</h2>
+          </div>
+          <span className="status-pill">safe events</span>
+        </div>
+        <ul className="readiness-list">
+          <li>
+            <strong>Official install</strong>
+            <span>Connect GitHub in Novus, merge the generated install PR, then redeploy production.</span>
+          </li>
+          <li>
+            <strong>Dashboard proof</strong>
+            <span>Run the demo on the public URL and capture the Novus dashboard screenshot after activity appears.</span>
+          </li>
+          <li>
+            <strong>Tracked funnel</strong>
+            <span>Project create, upload, parse/edit, model, walkthrough, variant, report, and share events are locally observable here.</span>
+          </li>
+          <li>
+            <strong>Privacy posture</strong>
+            <span>Events store counts, booleans, and state names only; raw plans, images, PDFs, addresses, and prompts stay out.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section className="tool-panel">
+        <div className="panel-heading">
+          <div>
             <p className="eyebrow">Event log</p>
             <h2 className="panel-title">Latest local events</h2>
           </div>

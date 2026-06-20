@@ -1,4 +1,7 @@
-import { DesignVariantSchemaZ } from "@renovation-twin/types";
+import {
+  DesignVariantSchemaZ,
+  type DesignVariantSchema,
+} from "@renovation-twin/types";
 import { Events, trackEvent } from "@renovation-twin/events";
 import { pendoTrackServer } from "../../../../../lib/server/pendo-track";
 import {
@@ -24,11 +27,13 @@ export async function POST(
     useIntent?: string;
     householdType?: string;
     roomPriorities?: unknown;
+    palette?: unknown;
   };
   const project = await getProjectOrDemo(projectId);
   const prompt =
     body.prompt?.trim() || "Create a polished, practical renovation concept.";
   const stylePreset = body.stylePreset?.trim() || "Warm Minimal";
+  const paletteOverride = normalizePalette(body.palette);
   const validRoomIds = new Set(project.plan.rooms.map((room) => room.id));
   const intent = {
     budgetLevel: normalizeBudgetLevel(body.budgetLevel),
@@ -49,6 +54,7 @@ export async function POST(
       useIntent: intent.useIntent,
       householdType: intent.householdType,
       roomPriorityCount: intent.roomPriorities.length,
+      customPalette: Boolean(paletteOverride),
     },
     project.id,
   );
@@ -73,7 +79,8 @@ export async function POST(
       jsonSchema: createDesignVariantJsonSchema(
         project.plan.rooms.map((room) => room.id),
       ),
-      maxTokens: 1400,
+      maxTokens: 1200,
+      timeoutMs: 10_000,
       system:
         "You create practical interior design variants from structured floor-plan JSON. Return compact JSON that exactly matches the provided schema. Use the given room ids only. Use valid hex colors. Never claim structural feasibility.",
       user: JSON.stringify({
@@ -92,14 +99,18 @@ export async function POST(
         prompt,
         stylePreset,
         intent,
+        preferredPalette: paletteOverride,
         requiredOutput:
           "Return one top-level DesignVariantSchema object. Do not wrap it in variant/data/result. Use palette.wall, palette.floor, palette.accent, and palette.textile as #RRGGBB hex colors. Keep summaries short.",
       }),
     });
-    variant = {
-      ...sanitizeVariantForPlan(variant, project.plan, intent),
-      name: stylePreset,
-    };
+    variant = applyPaletteOverride(
+      {
+        ...sanitizeVariantForPlan(variant, project.plan, intent),
+        name: stylePreset,
+      },
+      paletteOverride,
+    );
   } catch (error) {
     provider = "fallback";
     warning =
@@ -113,6 +124,7 @@ export async function POST(
       },
       project.variants.length,
     );
+    variant = applyPaletteOverride(variant, paletteOverride);
   }
 
   await saveVariant(project.id, variant, {
@@ -122,6 +134,7 @@ export async function POST(
     useIntent: intent.useIntent,
     householdType: intent.householdType,
     roomPriorityCount: intent.roomPriorities.length,
+    customPalette: Boolean(paletteOverride),
   });
 
   return jsonOk({
@@ -142,6 +155,57 @@ function normalizeRoomPriorities(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function normalizePalette(
+  value: unknown,
+): DesignVariantSchema["palette"] | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as Partial<Record<keyof DesignVariantSchema["palette"], unknown>>;
+  const wall = normalizeHexColor(candidate.wall);
+  const floor = normalizeHexColor(candidate.floor);
+  const accent = normalizeHexColor(candidate.accent);
+  const textile = normalizeHexColor(candidate.textile);
+
+  if (!wall || !floor || !accent || !textile) {
+    return undefined;
+  }
+
+  return { wall, floor, accent, textile };
+}
+
+function normalizeHexColor(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : undefined;
+}
+
+function applyPaletteOverride(
+  variant: DesignVariantSchema,
+  palette?: DesignVariantSchema["palette"],
+): DesignVariantSchema {
+  if (!palette) {
+    return variant;
+  }
+
+  return {
+    ...variant,
+    palette,
+    furniture: variant.furniture.map((item, index) => ({
+      ...item,
+      color: item.assetId === "sofa" || item.assetId === "bed"
+        ? palette.textile
+        : index % 2 === 0
+          ? palette.accent
+          : item.color,
+    })),
+  };
 }
 
 function createDesignVariantJsonSchema(roomIds: string[]): Record<string, unknown> {

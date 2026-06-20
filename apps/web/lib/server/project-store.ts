@@ -279,7 +279,7 @@ class PrismaProjectStoreAdapter implements ProjectStoreAdapter {
           });
         }
       },
-      { maxWait: 10_000, timeout: 15_000 },
+      { maxWait: 15_000, timeout: 60_000 },
     );
 
     for (const event of eventsToCreate) {
@@ -535,6 +535,43 @@ export async function attachUpload(
       rendered: upload.previewKind === "pdf-rendered",
       fallback: upload.previewKind !== "pdf-rendered",
     }, project.id);
+  }
+
+  if (upload.mimeType === "image/svg+xml") {
+    recordEventInStore(
+      store,
+      Events.PlanParseStarted,
+      { projectId, source: "svg_upload" },
+      project.id,
+    );
+
+    const response = createUploadedParseResponse(project);
+
+    project.plan = response.planProposal;
+    project.status = "PARSED";
+    project.updatedAt = new Date().toISOString();
+    project.planVersions.push(
+      createPlanVersion(
+        project,
+        response.planProposal,
+        "AUTO_PARSE",
+        response.confidence,
+      ),
+    );
+
+    recordEventInStore(
+      store,
+      Events.PlanParseCompleted,
+      {
+        projectId,
+        wallCount: response.planProposal.walls.length,
+        roomCount: response.planProposal.rooms.length,
+        confidenceBand: confidenceBand(response.confidence),
+        usedFallback: response.confidence < 0.5,
+        source: "svg_upload",
+      },
+      project.id,
+    );
   }
 
   await persistStore(store);
@@ -902,16 +939,31 @@ function createUploadedParseResponse(project: ProjectRecord) {
   const walls = usedSvgProposal
     ? parsedWalls
     : createBoundingWallProposal(project.plan);
+  const inferredRooms =
+    usedSvgProposal && latestUpload
+      ? createRoomProposalFromWalls(
+          project.plan,
+          walls,
+          latestUpload.planImageUrl,
+        )
+      : [];
   const rooms =
     project.plan.rooms.length > 0
       ? project.plan.rooms
-      : createBoundingRoomProposal(project.plan);
+      : inferredRooms.length > 0
+        ? inferredRooms
+        : createBoundingRoomProposal(project.plan);
   const confidence = usedSvgProposal
-    ? Math.min(0.78, 0.52 + Math.min(parsedWalls.length, 18) * 0.012)
+    ? Math.min(
+        0.84,
+        0.52 +
+          Math.min(parsedWalls.length, 18) * 0.012 +
+          Math.min(inferredRooms.length, 8) * 0.018,
+      )
     : 0.3;
   const warnings = usedSvgProposal
     ? [
-        `Parser found ${parsedWalls.length} normalized SVG wall candidates. Review scale, rooms, and openings before generating 3D.`,
+        `Parser found ${parsedWalls.length} normalized SVG wall candidates and ${rooms.length} room ${rooms.length === 1 ? "proposal" : "proposals"}. Review scale, rooms, and openings before generating 3D.`,
       ]
     : [
         "Parser used a low-confidence bounding-room proposal. Manual trace remains available and is recommended.",
@@ -977,6 +1029,288 @@ function createBoundingRoomProposal(plan: PlanSchema): PlanSchema["rooms"] {
   ];
 }
 
+function createRoomProposalFromWalls(
+  plan: PlanSchema,
+  walls: Wall[],
+  planImageUrl: string,
+): PlanSchema["rooms"] {
+  const rectangles = inferRectangularRoomBounds(walls, plan);
+  const labels = parseSvgTextLabels(planImageUrl);
+
+  return rectangles.slice(0, 12).map((rectangle, index) => {
+    const label = labels.find(
+      (candidate) =>
+        candidate.x >= rectangle.minX &&
+        candidate.x <= rectangle.maxX &&
+        candidate.y >= rectangle.minY &&
+        candidate.y <= rectangle.maxY,
+    );
+    const widthM = (rectangle.maxX - rectangle.minX) / plan.scalePxPerMeter;
+    const depthM = (rectangle.maxY - rectangle.minY) / plan.scalePxPerMeter;
+
+    return {
+      id: `proposal-room-${index + 1}`,
+      label: label?.text ?? `Room ${index + 1}`,
+      polygon: [
+        { x: rectangle.minX, y: rectangle.minY },
+        { x: rectangle.maxX, y: rectangle.minY },
+        { x: rectangle.maxX, y: rectangle.maxY },
+        { x: rectangle.minX, y: rectangle.maxY },
+      ],
+      areaM2: Number((widthM * depthM).toFixed(1)),
+    };
+  });
+}
+
+function inferRectangularRoomBounds(
+  walls: Wall[],
+  plan: PlanSchema,
+): Array<{ minX: number; maxX: number; minY: number; maxY: number }> {
+  const axisWalls = walls.filter(
+    (wall) => wall.start.x === wall.end.x || wall.start.y === wall.end.y,
+  );
+  const xs = uniqueSortedCoordinates(
+    axisWalls.flatMap((wall) => [wall.start.x, wall.end.x]),
+    plan.image.widthPx,
+  );
+  const ys = uniqueSortedCoordinates(
+    axisWalls.flatMap((wall) => [wall.start.y, wall.end.y]),
+    plan.image.heightPx,
+  );
+  const rectangles: Array<{
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  }> = [];
+
+  for (let leftIndex = 0; leftIndex < xs.length - 1; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < xs.length; rightIndex += 1) {
+      const minX = xs[leftIndex]!;
+      const maxX = xs[rightIndex]!;
+      if (maxX - minX < 72) {
+        continue;
+      }
+
+      for (let topIndex = 0; topIndex < ys.length - 1; topIndex += 1) {
+        for (let bottomIndex = topIndex + 1; bottomIndex < ys.length; bottomIndex += 1) {
+          const minY = ys[topIndex]!;
+          const maxY = ys[bottomIndex]!;
+          if (maxY - minY < 72) {
+            continue;
+          }
+
+          const bounds = { minX, maxX, minY, maxY };
+          if (
+            hasHorizontalBoundary(axisWalls, minY, minX, maxX) &&
+            hasHorizontalBoundary(axisWalls, maxY, minX, maxX) &&
+            hasVerticalBoundary(axisWalls, minX, minY, maxY) &&
+            hasVerticalBoundary(axisWalls, maxX, minY, maxY) &&
+            !hasFullInternalBoundary(axisWalls, bounds)
+          ) {
+            rectangles.push(bounds);
+          }
+        }
+      }
+    }
+  }
+
+  return dedupeRectangles(rectangles).sort(
+    (left, right) =>
+      (left.maxY - left.minY) * (left.maxX - left.minX) -
+      (right.maxY - right.minY) * (right.maxX - right.minX),
+  );
+}
+
+function uniqueSortedCoordinates(values: number[], max: number): number[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => Math.round(value))
+        .filter((value) => value >= 0 && value <= max),
+    ),
+  ).sort((left, right) => left - right);
+}
+
+function hasHorizontalBoundary(
+  walls: Wall[],
+  y: number,
+  minX: number,
+  maxX: number,
+): boolean {
+  return rangesCover(
+    walls
+      .filter(
+        (wall) =>
+          wall.start.y === wall.end.y &&
+          Math.abs(wall.start.y - y) <= 8,
+      )
+      .map((wall) => [
+        Math.min(wall.start.x, wall.end.x),
+        Math.max(wall.start.x, wall.end.x),
+      ]),
+    minX,
+    maxX,
+  );
+}
+
+function hasVerticalBoundary(
+  walls: Wall[],
+  x: number,
+  minY: number,
+  maxY: number,
+): boolean {
+  return rangesCover(
+    walls
+      .filter(
+        (wall) =>
+          wall.start.x === wall.end.x &&
+          Math.abs(wall.start.x - x) <= 8,
+      )
+      .map((wall) => [
+        Math.min(wall.start.y, wall.end.y),
+        Math.max(wall.start.y, wall.end.y),
+      ]),
+    minY,
+    maxY,
+  );
+}
+
+function rangesCover(
+  ranges: number[][],
+  from: number,
+  to: number,
+): boolean {
+  if (!ranges.length) {
+    return false;
+  }
+
+  const sorted = ranges
+    .map((range) => [range[0]!, range[1]!] as [number, number])
+    .sort((left, right) => left[0] - right[0]);
+  let coveredUntil = from;
+
+  for (const [rangeStart, rangeEnd] of sorted) {
+    if (rangeEnd < coveredUntil - 8) {
+      continue;
+    }
+    if (rangeStart > coveredUntil + 14) {
+      return false;
+    }
+    coveredUntil = Math.max(coveredUntil, rangeEnd);
+    if (coveredUntil >= to - 8) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasFullInternalBoundary(
+  walls: Wall[],
+  bounds: { minX: number; maxX: number; minY: number; maxY: number },
+): boolean {
+  return walls.some((wall) => {
+    if (
+      wall.start.x === wall.end.x &&
+      wall.start.x > bounds.minX + 8 &&
+      wall.start.x < bounds.maxX - 8
+    ) {
+      return rangesCover(
+        [[Math.min(wall.start.y, wall.end.y), Math.max(wall.start.y, wall.end.y)]],
+        bounds.minY,
+        bounds.maxY,
+      );
+    }
+
+    if (
+      wall.start.y === wall.end.y &&
+      wall.start.y > bounds.minY + 8 &&
+      wall.start.y < bounds.maxY - 8
+    ) {
+      return rangesCover(
+        [[Math.min(wall.start.x, wall.end.x), Math.max(wall.start.x, wall.end.x)]],
+        bounds.minX,
+        bounds.maxX,
+      );
+    }
+
+    return false;
+  });
+}
+
+function dedupeRectangles(
+  rectangles: Array<{ minX: number; maxX: number; minY: number; maxY: number }>,
+) {
+  const unique = new Map<string, (typeof rectangles)[number]>();
+
+  for (const rectangle of rectangles) {
+    unique.set(
+      [
+        Math.round(rectangle.minX / 4),
+        Math.round(rectangle.maxX / 4),
+        Math.round(rectangle.minY / 4),
+        Math.round(rectangle.maxY / 4),
+      ].join(":"),
+      rectangle,
+    );
+  }
+
+  return [...unique.values()];
+}
+
+function parseSvgTextLabels(
+  planImageUrl: string,
+): Array<{ x: number; y: number; text: string }> {
+  const svg = decodeSvgDataUrl(planImageUrl);
+  if (!svg) {
+    return [];
+  }
+
+  const labels: Array<{ x: number; y: number; text: string }> = [];
+  const textPattern = /<text\b([^>]*)>([\s\S]*?)<\/text>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = textPattern.exec(svg))) {
+    const attrs = readSvgNumberAttributes(match[1] ?? "");
+    const x = attrs.get("x");
+    const y = attrs.get("y");
+    const text = normalizeSvgTextLabel(match[2] ?? "");
+
+    if (x !== undefined && y !== undefined && text) {
+      labels.push({ x, y, text });
+    }
+  }
+
+  return labels;
+}
+
+function normalizeSvgTextLabel(value: string): string | null {
+  const text = value
+    .replace(/<[^>]+>/g, " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&nbsp;", " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalized = text.toLowerCase();
+
+  if (
+    !text ||
+    /^\d+(?:\.\d+)?\s*m$/.test(normalized) ||
+    normalized.includes("window") ||
+    normalized.includes("door") ||
+    normalized.includes("scale")
+  ) {
+    return null;
+  }
+
+  if (normalized === "bath") {
+    return "Bathroom";
+  }
+
+  return text;
+}
+
 function parseUploadedSvgWalls(
   planImageUrl: string,
   widthPx: number,
@@ -991,6 +1325,10 @@ function parseUploadedSvgWalls(
   const linePattern = /<line\b([^>]*)>/gi;
   let lineMatch: RegExpExecArray | null;
   while ((lineMatch = linePattern.exec(svg))) {
+    if (!isWallLikeSvgElement(lineMatch[1] ?? "")) {
+      continue;
+    }
+
     const attrs = readSvgNumberAttributes(lineMatch[1] ?? "");
     const x1 = attrs.get("x1");
     const y1 = attrs.get("y1");
@@ -1012,6 +1350,10 @@ function parseUploadedSvgWalls(
   const rectPattern = /<rect\b([^>]*)>/gi;
   let rectMatch: RegExpExecArray | null;
   while ((rectMatch = rectPattern.exec(svg))) {
+    if (!isWallLikeSvgElement(rectMatch[1] ?? "")) {
+      continue;
+    }
+
     const attrs = readSvgNumberAttributes(rectMatch[1] ?? "");
     const x = attrs.get("x") ?? 0;
     const y = attrs.get("y") ?? 0;
@@ -1026,6 +1368,10 @@ function parseUploadedSvgWalls(
   const pointsPattern = /<(?:polyline|polygon)\b([^>]*)>/gi;
   let pointsMatch: RegExpExecArray | null;
   while ((pointsMatch = pointsPattern.exec(svg))) {
+    if (!isWallLikeSvgElement(pointsMatch[1] ?? "")) {
+      continue;
+    }
+
     const [, rawPoints = ""] =
       pointsMatch[1]?.match(/\bpoints\s*=\s*["']([^"']+)["']/i) ?? [];
     const closeShape = /^<polygon/i.test(pointsMatch[0] ?? "");
@@ -1041,6 +1387,10 @@ function parseUploadedSvgWalls(
   const pathPattern = /<path\b[^>]*\sd=["']([^"']+)["'][^>]*>/gi;
   let pathMatch: RegExpExecArray | null;
   while ((pathMatch = pathPattern.exec(svg))) {
+    if (!isWallLikeSvgElement(pathMatch[0] ?? "")) {
+      continue;
+    }
+
     walls.push(...parseRectilinearPath(pathMatch[1] ?? "", walls.length));
   }
 
@@ -1057,6 +1407,82 @@ function readSvgNumberAttributes(markup: string): Map<string, number> {
   }
 
   return attrs;
+}
+
+function isWallLikeSvgElement(markup: string): boolean {
+  const attrs = readSvgNumberAttributes(markup);
+  const stroke = readSvgAttribute(markup, "stroke") ?? readSvgStyle(markup, "stroke");
+  const styleStrokeWidth = readSvgStyle(markup, "stroke-width");
+  const strokeWidth =
+    attrs.get("stroke-width") ??
+    (styleStrokeWidth ? Number(styleStrokeWidth) : 1);
+
+  if (!stroke || stroke.toLowerCase() === "none") {
+    return false;
+  }
+
+  if (!Number.isFinite(strokeWidth) || strokeWidth < 3.5) {
+    return false;
+  }
+
+  return isDarkWallStroke(stroke);
+}
+
+function readSvgAttribute(markup: string, name: string): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = markup.match(new RegExp(`\\b${escaped}\\s*=\\s*["']([^"']+)["']`, "i"));
+  return match?.[1]?.trim() ?? null;
+}
+
+function readSvgStyle(markup: string, name: string): string | null {
+  const style = readSvgAttribute(markup, "style");
+  if (!style) {
+    return null;
+  }
+
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = style.match(new RegExp(`${escaped}\\s*:\\s*([^;]+)`, "i"));
+  return match?.[1]?.trim() ?? null;
+}
+
+function isDarkWallStroke(value: string): boolean {
+  const color = parseSvgColor(value);
+
+  if (!color) {
+    return true;
+  }
+
+  const luminance =
+    0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+
+  return luminance < 100;
+}
+
+function parseSvgColor(value: string): { r: number; g: number; b: number } | null {
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "black") {
+    return { r: 0, g: 0, b: 0 };
+  }
+
+  const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)?.[1];
+  if (!hex) {
+    return null;
+  }
+
+  if (hex.length === 3) {
+    return {
+      r: parseInt(hex[0]! + hex[0]!, 16),
+      g: parseInt(hex[1]! + hex[1]!, 16),
+      b: parseInt(hex[2]! + hex[2]!, 16),
+    };
+  }
+
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  };
 }
 
 function decodeSvgDataUrl(dataUrl: string): string | null {
