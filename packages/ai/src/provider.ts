@@ -4,11 +4,17 @@ export async function runJsonModel<T>({
   system,
   user,
   schema,
-  timeoutMs = 5_000,
+  schemaName = "RenovationTwinStructuredOutput",
+  jsonSchema,
+  maxTokens = 1400,
+  timeoutMs = 25_000,
 }: {
   system: string;
   user: string;
   schema: z.ZodType<T>;
+  schemaName?: string;
+  jsonSchema?: Record<string, unknown>;
+  maxTokens?: number;
   timeoutMs?: number;
 }): Promise<T> {
   const apiKey = process.env.FIREWORKS_API_KEY;
@@ -33,9 +39,16 @@ export async function runJsonModel<T>({
         },
         body: JSON.stringify({
           model,
-          response_format: { type: "json_object" },
-          max_tokens: 2200,
-          temperature: 0.2,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: schemaName,
+              strict: true,
+              schema: jsonSchema ?? toFireworksJsonSchema(schema),
+            },
+          },
+          max_tokens: maxTokens,
+          temperature: 0.1,
           messages: [
             { role: "system", content: system },
             { role: "user", content: user }
@@ -76,4 +89,11 @@ export async function runJsonModel<T>({
   }
 
   return schema.parse(json);
+}
+
+function toFireworksJsonSchema<T>(schema: z.ZodType<T>) {
+  const jsonSchema = z.toJSONSchema(schema) as Record<string, unknown>;
+
+  delete jsonSchema.$schema;
+  return jsonSchema;
 }

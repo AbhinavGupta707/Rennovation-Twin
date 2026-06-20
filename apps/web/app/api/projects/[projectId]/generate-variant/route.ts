@@ -59,8 +59,13 @@ export async function POST(
   try {
     variant = await runJsonModel({
       schema: DesignVariantSchemaZ,
+      schemaName: "DesignVariantSchema",
+      jsonSchema: createDesignVariantJsonSchema(
+        project.plan.rooms.map((room) => room.id),
+      ),
+      maxTokens: 1400,
       system:
-        "You create practical interior design variants from structured floor-plan JSON. Return only valid JSON matching the requested schema. Never claim structural feasibility.",
+        "You create practical interior design variants from structured floor-plan JSON. Return compact JSON that exactly matches the provided schema. Use the given room ids only. Use valid hex colors. Never claim structural feasibility.",
       user: JSON.stringify({
         plan: {
           units: project.plan.units,
@@ -78,10 +83,13 @@ export async function POST(
         stylePreset,
         intent,
         requiredOutput:
-          "Return a DesignVariantSchema JSON object with palette, roomNotes, furniture, warnings, rationale, and intent. Furniture roomId values must use only the provided room ids.",
+          "Return one top-level DesignVariantSchema object. Do not wrap it in variant/data/result. Use palette.wall, palette.floor, palette.accent, and palette.textile as #RRGGBB hex colors. Keep summaries short.",
       }),
     });
-    variant = sanitizeVariantForPlan(variant, project.plan, intent);
+    variant = {
+      ...sanitizeVariantForPlan(variant, project.plan, intent),
+      name: stylePreset,
+    };
   } catch (error) {
     provider = "fallback";
     warning =
@@ -124,4 +132,135 @@ function normalizeRoomPriorities(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+function createDesignVariantJsonSchema(roomIds: string[]): Record<string, unknown> {
+  const safeRoomIds = roomIds.length ? roomIds : ["room"];
+  const colorSchema = {
+    type: "string",
+    pattern: "^#[0-9A-Fa-f]{6}$",
+  };
+  const positionSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["x", "y", "z"],
+    properties: {
+      x: { type: "number" },
+      y: { type: "number" },
+      z: { type: "number" },
+    },
+  };
+  const scaleSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["x", "y", "z"],
+    properties: {
+      x: { type: "number", exclusiveMinimum: 0 },
+      y: { type: "number", exclusiveMinimum: 0 },
+      z: { type: "number", exclusiveMinimum: 0 },
+    },
+  };
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "name",
+      "style",
+      "palette",
+      "roomNotes",
+      "furniture",
+      "warnings",
+      "rationale",
+      "intent",
+    ],
+    properties: {
+      name: { type: "string", maxLength: 60 },
+      style: { type: "string", maxLength: 100 },
+      palette: {
+        type: "object",
+        additionalProperties: false,
+        required: ["wall", "floor", "accent", "textile"],
+        properties: {
+          wall: colorSchema,
+          floor: colorSchema,
+          accent: colorSchema,
+          textile: colorSchema,
+        },
+      },
+      roomNotes: {
+        type: "array",
+        minItems: 2,
+        maxItems: 4,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["roomId", "summary", "changes"],
+          properties: {
+            roomId: { type: "string", enum: safeRoomIds },
+            summary: { type: "string", maxLength: 120 },
+            changes: {
+              type: "array",
+              minItems: 1,
+              maxItems: 3,
+              items: { type: "string", maxLength: 90 },
+            },
+          },
+        },
+      },
+      furniture: {
+        type: "array",
+        minItems: 1,
+        maxItems: 4,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "assetId", "roomId", "position", "rotationY", "scale"],
+          properties: {
+            id: { type: "string", maxLength: 60 },
+            assetId: {
+              type: "string",
+              enum: ["sofa", "table", "desk", "bed", "chair"],
+            },
+            roomId: { type: "string", enum: safeRoomIds },
+            position: positionSchema,
+            rotationY: { type: "number" },
+            scale: scaleSchema,
+            color: colorSchema,
+          },
+        },
+      },
+      warnings: {
+        type: "array",
+        minItems: 1,
+        maxItems: 2,
+        items: { type: "string", maxLength: 140 },
+      },
+      rationale: { type: "string", maxLength: 220 },
+      intent: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "budgetLevel",
+          "useIntent",
+          "householdType",
+          "roomPriorities",
+        ],
+        properties: {
+          budgetLevel: {
+            type: "string",
+            enum: ["lean", "balanced", "premium"],
+          },
+          useIntent: { type: "string", maxLength: 80 },
+          householdType: { type: "string", maxLength: 80 },
+          roomPriorities: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            items: { type: "string", enum: safeRoomIds },
+          },
+        },
+      },
+    },
+  };
 }
