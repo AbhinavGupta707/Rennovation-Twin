@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, type RootState, useThree } from "@react-three/fiber";
 import {
   Environment,
   Html,
@@ -21,6 +21,7 @@ import type {
   FurnitureItem,
   PlanSchema,
 } from "@renovation-twin/types";
+import { Events } from "@renovation-twin/events";
 import { planToSceneSpec } from "@renovation-twin/geometry";
 
 const baseVariant: DesignVariantSchema = {
@@ -52,6 +53,7 @@ type CameraPreset = {
   position: [number, number, number];
   target: [number, number, number];
   fov: number;
+  controls: "orbit" | "standing";
 };
 
 export function PlanModelViewer({
@@ -79,6 +81,7 @@ export function PlanModelViewer({
   >("idle");
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const trackedViewRef = useRef(false);
   const activeVariant = allVariants.find((variant) => variant.name === activeVariantName) ?? allVariants[0]!;
   const furniture =
     activeVariant.furniture.length > 0 ? activeVariant.furniture : createBaseFurniture(plan, activeVariant);
@@ -113,6 +116,26 @@ export function PlanModelViewer({
 
     return () => window.clearInterval(timer);
   }, [cameraPresets, guidedMode]);
+
+  useEffect(() => {
+    if (!projectId || readOnly || trackedViewRef.current) {
+      return;
+    }
+
+    trackedViewRef.current = true;
+    void postJson<{
+      event: { name: string; createdAt: string };
+    }>("/api/events", {
+      name: Events.WalkthroughStarted,
+      projectId,
+      props: {
+        projectId,
+        cameraPreset: activeCameraPresetId,
+      },
+    }).catch((error) => {
+      console.warn("Walkthrough tracking failed", error);
+    });
+  }, [activeCameraPresetId, projectId, readOnly]);
 
   async function captureScreenshot() {
     if (!projectId || readOnly || !canvasRef.current) {
@@ -275,6 +298,14 @@ export function PlanModelViewer({
 }
 
 function CameraControlsRig({ preset }: { preset: CameraPreset }) {
+  if (preset.controls === "standing") {
+    return <StandingLookControls preset={preset} />;
+  }
+
+  return <OrbitCameraControls preset={preset} />;
+}
+
+function OrbitCameraControls({ preset }: { preset: CameraPreset }) {
   const controlsRef = useRef<ElementRef<typeof OrbitControls> | null>(null);
   const { camera } = useThree();
 
@@ -291,11 +322,133 @@ function CameraControlsRig({ preset }: { preset: CameraPreset }) {
       makeDefault
       enableDamping
       dampingFactor={0.08}
-      minDistance={preset.id === "overview" ? 2.2 : 0.35}
+      enablePan={false}
+      minDistance={2.2}
       maxDistance={30}
-      maxPolarAngle={preset.id === "overview" ? Math.PI / 2.08 : Math.PI / 1.78}
+      maxPolarAngle={Math.PI / 2.08}
     />
   );
+}
+
+function StandingLookControls({ preset }: { preset: CameraPreset }) {
+  const { camera, gl } = useThree();
+  const orientationRef = useRef(getStandingOrientation(preset));
+  const pointerRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const orientation = getStandingOrientation(preset);
+    orientationRef.current = orientation;
+    camera.position.set(...preset.position);
+    applyStandingLook(camera, preset.position, orientation);
+  }, [camera, preset]);
+
+  useEffect(() => {
+    const element = gl.domElement;
+
+    function onPointerDown(event: PointerEvent) {
+      event.preventDefault();
+      pointerRef.current = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+      element.setPointerCapture(event.pointerId);
+    }
+
+    function onPointerMove(event: PointerEvent) {
+      const pointer = pointerRef.current;
+
+      if (!pointer || pointer.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      const nextOrientation = {
+        yaw: orientationRef.current.yaw - (event.clientX - pointer.x) * 0.004,
+        pitch: clampPitch(
+          orientationRef.current.pitch - (event.clientY - pointer.y) * 0.003,
+        ),
+      };
+      orientationRef.current = nextOrientation;
+      pointerRef.current = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+      };
+      camera.position.set(...preset.position);
+      applyStandingLook(camera, preset.position, nextOrientation);
+    }
+
+    function onPointerUp(event: PointerEvent) {
+      if (pointerRef.current?.pointerId !== event.pointerId) {
+        return;
+      }
+
+      pointerRef.current = null;
+      if (element.hasPointerCapture(event.pointerId)) {
+        element.releasePointerCapture(event.pointerId);
+      }
+    }
+
+    function onWheel(event: WheelEvent) {
+      event.preventDefault();
+    }
+
+    element.addEventListener("pointerdown", onPointerDown);
+    element.addEventListener("pointermove", onPointerMove);
+    element.addEventListener("pointerup", onPointerUp);
+    element.addEventListener("pointercancel", onPointerUp);
+    element.addEventListener("wheel", onWheel, { passive: false });
+
+    return () => {
+      element.removeEventListener("pointerdown", onPointerDown);
+      element.removeEventListener("pointermove", onPointerMove);
+      element.removeEventListener("pointerup", onPointerUp);
+      element.removeEventListener("pointercancel", onPointerUp);
+      element.removeEventListener("wheel", onWheel);
+    };
+  }, [camera, gl, preset]);
+
+  return null;
+}
+
+function getStandingOrientation(preset: CameraPreset) {
+  const dx = preset.target[0] - preset.position[0];
+  const dy = preset.target[1] - preset.position[1];
+  const dz = preset.target[2] - preset.position[2];
+  const length = Math.max(Math.hypot(dx, dy, dz), 0.001);
+
+  return {
+    yaw: Math.atan2(dx, dz),
+    pitch: clampPitch(Math.asin(dy / length)),
+  };
+}
+
+function applyStandingLook(
+  camera: RootState["camera"],
+  position: [number, number, number],
+  orientation: { yaw: number; pitch: number },
+) {
+  const cosPitch = Math.cos(orientation.pitch);
+  const direction = {
+    x: Math.sin(orientation.yaw) * cosPitch,
+    y: Math.sin(orientation.pitch),
+    z: Math.cos(orientation.yaw) * cosPitch,
+  };
+
+  camera.lookAt(
+    position[0] + direction.x,
+    position[1] + direction.y,
+    position[2] + direction.z,
+  );
+}
+
+function clampPitch(value: number) {
+  return Math.min(Math.max(value, -0.72), 0.52);
 }
 
 function PlanScene({
@@ -436,10 +589,10 @@ function renderFurniturePrimitive(item: FurnitureItem, color: string, accentColo
     default:
       return (
         <>
-          <Box size={[width, height * 0.52, depth]} position={[0, -height * 0.12, 0]} color={color} />
-          <Box size={[width, height * 0.72, depth * 0.16]} position={[0, height * 0.16, -depth * 0.42]} color={accentColor} />
-          <Box size={[width * 0.1, height * 0.46, depth]} position={[-width * 0.55, -height * 0.06, 0]} color={accentColor} />
-          <Box size={[width * 0.1, height * 0.46, depth]} position={[width * 0.55, -height * 0.06, 0]} color={accentColor} />
+          <Box size={[width, height * 0.34, depth * 0.64]} position={[0, -height * 0.2, depth * 0.08]} color={color} />
+          <Box size={[width, height * 0.78, depth * 0.14]} position={[0, height * 0.1, -depth * 0.39]} color={accentColor} />
+          <Box size={[width * 0.1, height * 0.54, depth * 0.68]} position={[-width * 0.55, -height * 0.1, depth * 0.08]} color={accentColor} />
+          <Box size={[width * 0.1, height * 0.54, depth * 0.68]} position={[width * 0.55, -height * 0.1, depth * 0.08]} color={accentColor} />
         </>
       );
   }
@@ -455,9 +608,9 @@ function Box({
   color: string;
 }) {
   return (
-    <mesh castShadow receiveShadow position={position}>
+    <mesh castShadow receiveShadow={false} position={position}>
       <boxGeometry args={size} />
-      <meshStandardMaterial color={color} roughness={0.72} />
+      <meshStandardMaterial color={color} roughness={0.78} />
     </mesh>
   );
 }
@@ -511,6 +664,7 @@ function createCameraPresets(
       position: [width / 2, Math.max(width, depth) * 0.78, depth * 1.18],
       target: overviewTarget,
       fov: 56,
+      controls: "orbit",
     },
     createRoomCameraPreset({
       id: "living",
@@ -619,6 +773,7 @@ function createRoomCameraPreset({
     position: [positionPoint.x, 1.55, positionPoint.z],
     target: [targetPoint.x, 1.32, targetPoint.z],
     fov: 64,
+    controls: "standing",
   };
 }
 
@@ -669,6 +824,7 @@ function createWalkthroughPreset(
     position: [positionPoint.x, 1.55, positionPoint.z],
     target: [targetPoint.x, 1.34, targetPoint.z],
     fov: 68,
+    controls: "standing",
   };
 }
 

@@ -216,6 +216,9 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   await expect(
     page.getByRole("heading", { name: "London flat model" }),
   ).toBeVisible();
+  await expect(
+    page.getByText(/could not be saved to the project log/i),
+  ).toHaveCount(0);
 
   const stats = await webglCanvasStats(page);
   expect(stats.width).toBeGreaterThan(700);
@@ -256,6 +259,24 @@ test("London flat 3D model renders human room cameras on desktop", async ({
   const livingStats = await webglCanvasStats(page);
   expect(livingStats.colorBuckets).toBeGreaterThan(6);
 
+  const beforeStandingLook = await page.screenshot({ fullPage: true });
+  await page.mouse.move(
+    box!.x + box!.width * 0.52,
+    box!.y + box!.height * 0.52,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    box!.x + box!.width * 0.36,
+    box!.y + box!.height * 0.46,
+    { steps: 12 },
+  );
+  await page.mouse.up();
+  await page.waitForTimeout(500);
+  const afterStandingLook = await page.screenshot({ fullPage: true });
+  expect(byteDiff(beforeStandingLook, afterStandingLook)).toBeGreaterThan(800);
+  const draggedLivingStats = await webglCanvasStats(page);
+  expect(draggedLivingStats.colorBuckets).toBeGreaterThan(6);
+
   await page.getByRole("button", { name: /Bedroom \/ office/ }).click();
   await expect(
     page.getByRole("button", { name: /Bedroom \/ office/ }),
@@ -290,6 +311,9 @@ test("London flat 3D model renders on mobile", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "London flat model" }),
   ).toBeVisible();
+  await expect(
+    page.getByText(/could not be saved to the project log/i),
+  ).toHaveCount(0);
 
   const stats = await webglCanvasStats(page);
   expect(stats.width).toBeGreaterThan(300);

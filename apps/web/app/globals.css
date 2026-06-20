@@ -552,6 +552,7 @@ a {
 
 .model-canvas-shell canvas {
   display: block;
+  cursor: grab;
   touch-action: none;
 }
 
